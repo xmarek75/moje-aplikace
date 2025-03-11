@@ -16,36 +16,44 @@ class UserResponse(BaseModel):
     username: str
     email: str  
 
-        
 class UserLogin(BaseModel):
     username: str
     password: str
 
-# Schéma videa
-class VideoBase(BaseModel):
+# ✅ Přidání MediaBase (dříve VideoBase)
+class MediaBase(BaseModel):
     title: str
     file_path: str
 
-class VideoCreate(VideoBase):
+class MediaCreate(MediaBase):
     owner_id: int
 
-class VideoResponse(VideoBase):
+class MediaResponse(MediaBase):
     id: int
     title: str
-    file_path: str 
+    file_path: str
 
-# Schéma přepisu
+    class Config:
+        from_attributes = True
+
+class MediaRenameRequest(BaseModel):
+    title: str
+
+class ModelChangeRequest(BaseModel):
+    model: str
+
+# ✅ Oprava TranscriptionBase (použití media_id místo video_id)
 class TranscriptionBase(BaseModel):
     text: str
-    video_id: int
+    media_id: int
 
 class TranscriptionCreate(TranscriptionBase):
-    pass
+    model: Optional[str] = None  # ✅ Přidáno, aby bylo možné uložit model přepisu
 
 class TranscriptionResponse(BaseModel):
     id: int
     text: str
-    video: VideoResponse  # 
+    media: MediaResponse  # ✅ Opraveno z VideoResponse na MediaResponse
     created_at: datetime
     updated_at: datetime
     progress: float

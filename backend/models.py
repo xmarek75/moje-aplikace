@@ -20,20 +20,20 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String)
 
-    videos = relationship("Video", back_populates="owner")
+    media = relationship("Media", back_populates="owner")
     shared_transcriptions = relationship("Transcription", secondary=shared_transcriptions, back_populates="shared_with")
 
-# Videa
-class Video(Base):
-    __tablename__ = "videos"
+# Média
+class Media(Base):
+    __tablename__ = "media"
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     file_path = Column(String)
     owner_id = Column(Integer, ForeignKey("users.id"))
 
-    owner = relationship("User", back_populates="videos")
-    transcription = relationship("Transcription", back_populates="video", uselist=False)
+    owner = relationship("User", back_populates="media")
+    transcription = relationship("Transcription", back_populates="media", uselist=False)
 
 # Přepisy
 class Transcription(Base):
@@ -41,11 +41,13 @@ class Transcription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     text = Column(Text)
-    video_id = Column(Integer, ForeignKey("videos.id"))
+    media_id = Column(Integer, ForeignKey("media.id"))
     created_at = Column(DateTime, default=datetime.utcnow)  # Datum vytvoření
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # Poslední změna
     progress = Column(Float, default=0.0)  # Stav v procentech
+    model = Column(String, nullable=True)
 
-    video = relationship("Video", back_populates="transcription")
+    media = relationship("Media", back_populates="transcription")
+    
     shared_with = relationship("User", secondary="shared_transcriptions", back_populates="shared_transcriptions")
 
