@@ -2,21 +2,32 @@
   <q-page class="page-container">
     <!-- 🔹 Tlačítko "Transcription" s menu -->
     <div class="transcription-button-container">
-      <q-btn label="Transcription" color="primary" icon="article" @click="openTranscriptionMenu" class=TranscriptionButton>
+      <q-btn label="Transcription" color="primary" icon="article"  class=TranscriptionButton>
         <q-menu>
           <q-list>
             <q-item clickable v-close-popup @click="openModelDialog">
               <q-item-section>Choose Different Model</q-item-section>
             </q-item>
-            <q-item clickable v-close-popup @click="toggleSubtitleMode">
+            <q-item clickable v-close-popup @click="redirectToSubtitleMode">
               <q-item-section>Subtitle Mode</q-item-section>
             </q-item>
-            <q-item clickable v-close-popup @click="downloadTranscription">
+            <q-item clickable v-close-popup @click="showDownloadDialog = true">
               <q-item-section>Download</q-item-section>
             </q-item>
           </q-list>
         </q-menu>
       </q-btn>
+      <div class="shortcut-header">
+        <q-btn
+            dense
+            round
+            icon="help_outline"
+            flat
+            @click="showShortcutsDialog = true"
+        >
+            <q-tooltip>Keyboard Shortcuts</q-tooltip>
+        </q-btn>
+      </div>
     </div>
     <q-card class="main-card">
       <q-card-section class="header">
@@ -28,20 +39,30 @@
 
       <div class="content-container">
         <!-- Levá část: Textová transkripce -->
-        <div class="transcription-container">
-          <span v-for="segment in transcription.segments" :key="segment.start">
-            <span 
-              v-for="(word, index) in segment.words" 
-              :key="word.start"
-              :class="[getConfidenceClass(word.confidence), { 'highlighted': isHighlighted(word.start) }]"
-              contenteditable="true"
-              @click="selectWord(word)"
-              @blur="updateWordText($event, word, index, segment.words)" 
+        <div 
+        class="transcription-container" 
+        ref="transcriptionContainer" 
+        contenteditable 
+        @keydown="handleKeyDown"
+        >
+            <div 
+                v-for="segment in transcription.segments" 
+                :key="segment.start" 
+                class="segment-line"
             >
-              {{ word.word }}
-            </span>
-            <span> </span>
-          </span>
+                <span 
+                v-for="(word, index) in segment.words" 
+                :key="word.start"
+                :ref="setWordRef"
+                :data-word-start="word.start"
+                :class="[getConfidenceClass(word.confidence), { 'highlighted': isHighlighted(word.start) }]"
+                contenteditable="true"
+                @click="selectWord(word)"
+                @blur="updateWordText($event, word, index, segment.words)" 
+                >
+                {{ word.word }}
+                </span>
+            </div>
         </div>
         <!-- Pravá část: Detaily slova -->
         <div class="details-container" v-if="selectedWord">
@@ -73,6 +94,8 @@
         :src="getMediaPath(transcription.media.file_path)"
         class="audio-player"
         @timeupdate="updateActiveWord"
+        @play="onMediaPlay"
+        @pause = "MediaPlayerPlaying = false"
       >          
       </audio>
       <!-- Výběr rychlosti přehrávání -->
@@ -121,12 +144,80 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+    <q-dialog v-model="showShortcutsDialog">
+        <q-card>
+            <q-card-section>
+            <div class="text-h6">⌨️ Keyboard Shortcuts</div>
+            </q-card-section>
+
+            <q-card-section>
+            <q-list dense bordered class="q-mb-md">
+                <q-item>
+                <q-item-section>Ctrl + →</q-item-section>
+                <q-item-section side>Next word</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + ←</q-item-section>
+                <q-item-section side>Previous word</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + ↑</q-item-section>
+                <q-item-section side>Previous segment</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + ↓</q-item-section>
+                <q-item-section side>Next segment</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + Enter</q-item-section>
+                <q-item-section side>Mark word as correct (black)</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + Space</q-item-section>
+                <q-item-section side>Play / Pause media</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + M</q-item-section>
+                <q-item-section side>Mark word as done (green)</q-item-section>
+                </q-item>
+            </q-list>
+            </q-card-section>
+
+            <q-card-actions align="right">
+            <q-btn flat label="Close" color="primary" v-close-popup />
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+    <q-dialog v-model="showDownloadDialog">
+  <q-card>
+    <q-card-section>
+      <div class="text-h6">Download Options</div>
+    </q-card-section>
+    <q-card-section>
+      <q-btn 
+        label="Download without timestamps" 
+        color="primary" 
+        class="q-mb-sm full-width"
+        @click="handleDownloadPlain"
+      />
+      <q-btn 
+        label="Download with timestamps" 
+        color="secondary" 
+        class="full-width"
+        @click="handleDownloadWithTimestamps"
+      />
+    </q-card-section>
+    <q-card-actions align="right">
+      <q-btn flat label="Cancel" color="negative" v-close-popup />
+    </q-card-actions>
+  </q-card>
+</q-dialog>
   </q-page>
 </template>
 
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from 'boot/axios';
 
@@ -143,19 +234,23 @@ const newTitle = ref(""); //uchovava novy nazev
 const selectedModel = ref(""); //novy model
 const playbackRate = ref(1.0); //defaultni rychlost prehravani
 const speedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]; //moznosti rychlosti prehravani
-
+const transcriptionContainer = ref(null) //pro automaticke scrollovani
+const wordElements = ref({})
+const MediaPlayerPlaying = ref(false); //flag pro media player 
+const showShortcutsDialog = ref(false); // dialog napovedy
+const showDownloadDialog = ref(false); // dialog pro stazeni
 // ✅ Tabulka sloupců pro vybrané slovo
 const columns = [
   { name: "word", label: "Word", align: "left", field: row => row.word },
   { name: "start", label: "Start Time", align: "left", field: row => formatTime(row.start) },
   { name: "end", label: "End Time", align: "left", field: row => formatTime(row.end) },
-  { name: "confidence", label: "Confidence", align: "left", field: row => (row.confidence * 100).toFixed(1) + "%" }
+  { name: "confidence", label: "Confidence", align: "left", field: row => Math.min(row.confidence * 100, 100).toFixed(1) + "%" }
 ];
 //tabulka modelu
 const models = [
-  { label: 'Model A', value: 'model_a' },
-  { label: 'Model B', value: 'model_b' },
-  { label: 'Model C', value: 'model_c' }
+  { label: 'Base', value: 'model_a' },
+  { label: 'Medium', value: 'model_b' },
+  { label: 'Large', value: 'model_c' }
 ]
 // ✅ Načtení transkripce z API
 const fetchTranscription = async () => {
@@ -203,6 +298,14 @@ const saveTranscription = async () => {
 const cancelEdit = () => {
   router.push("/home");
 };
+const redirectToSubtitleMode = () =>{
+  if (!route.params.id) {
+    console.error("❌ Chyba: Chybí ID transkripce!");
+    return;
+  }
+  // Přesměrování na stránku s úpravou titulků
+  router.push(`/subtitle-editor/${route.params.id}`);
+};
 
 // ✅ Funkce pro formátování času
 const formatTime = (time) => {
@@ -219,6 +322,7 @@ const isHighlighted = (wordStart) => {
 
 // ✅ Určuje barvu podle confidence
 const getConfidenceClass = (confidence) => {
+  if (confidence > 1.0) return 'text-green';
   if (confidence < 0.7) return "text-red";
   return "text-black";
 };
@@ -232,18 +336,17 @@ const selectWord = (word) => {
   activeWordStart.value = word.start; //zvyraznit slovo
 };
 
-// ✅ Aktualizace aktivního slova při přehrávání
+// Aktualizace aktivního slova při přehrávání
 const updateActiveWord = () => {
-  if (!audioPlayer.value) return;
-
+  if (!audioPlayer.value || !MediaPlayerPlaying.value) return;
   const currentTime = audioPlayer.value.currentTime;
   let foundWord = null;
 
   transcription.value.segments.forEach(segment => {
     segment.words.forEach(word => {
       if (
-        currentTime >= (word.start - 0.1) && 
-        currentTime <= (word.end ? word.end + 0.1 : word.start + 0.5)
+        currentTime >= (word.start) &&
+        currentTime <= (word.end)
       ) {
         foundWord = word;
       }
@@ -252,7 +355,18 @@ const updateActiveWord = () => {
 
   if (foundWord) {
     activeWordStart.value = foundWord.start;
-    selectedWord.value = foundWord; // ✅ Zajištění, že se zobrazí tabulka
+    selectedWord.value = foundWord;
+
+    const el = wordElements.value[foundWord.start];
+    if (el && transcriptionContainer.value) {
+      const container = transcriptionContainer.value;
+      const offsetTop = el.offsetTop - container.offsetTop;
+      const scrollTarget = offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+      container.scrollTo({
+        top: scrollTarget,
+        behavior: 'smooth'
+      });
+    }
   }
 };
 
@@ -333,8 +447,292 @@ const openModelDialog = () => {
   selectedModel.value = transcription.value.model || '';
   modelDialogVisible.value = true;
 };
+// Pomocná funkce pro přiřazení ref ke slovům
+const setWordRef = (el) => {
+  if (el && el.dataset && el.dataset.wordStart) {
+    wordElements.value[el.dataset.wordStart] = el
+  }
+}
+//podle kurzoru zmena detailu a casu na mediaplayer   + autoscroll
+const handleSelectionChange = () => {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return;
 
-onMounted(fetchTranscription);
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer.parentElement;
+
+  if (node && node.dataset.wordStart) {
+    const startTime = parseFloat(node.dataset.wordStart);
+    const word = findWordByStart(startTime);
+
+    if (word) {
+      activeWordStart.value = word.start;
+      selectedWord.value = word;
+
+      // ⏪ Nastav čas v přehrávači
+      if (audioPlayer.value) {
+        audioPlayer.value.currentTime = word.start;
+      }
+
+      // 🔄 Scroll doprostřed
+      const el = wordElements.value[word.start];
+      if (el && transcriptionContainer.value) {
+        const container = transcriptionContainer.value;
+        const offsetTop = el.offsetTop - container.offsetTop;
+        const scrollTarget = offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+        container.scrollTo({
+          top: scrollTarget,
+          behavior: 'smooth'
+        });
+      }
+    }
+  }
+};
+const getAllWords = () => {
+  return transcription.value.segments.flatMap(s => s.words);
+};
+const findWordByStart = (start) => {
+  for (const segment of transcription.value.segments) {
+    const found = segment.words.find(w => w.start === start)
+    if (found) return found
+  }
+  return null
+}
+// Klávesová navigace a ovládání přehrávače
+const handleKeyboardNavigation = (event) => {
+  const segments = transcription.value.segments;
+  const flatWords = segments.flatMap(s => s.words);
+
+  // ⏯️ Ctrl + Mezerník → Play / Pause
+  if (event.ctrlKey && event.code === 'Space') {
+    event.preventDefault();
+    if (audioPlayer.value) {
+      audioPlayer.value.paused ? audioPlayer.value.play() : audioPlayer.value.pause();
+    }
+    return;
+  }
+
+  // ✅ Ctrl + Enter → potvrzení správnosti
+  if (event.ctrlKey && event.key === 'Enter') {
+    event.preventDefault();
+    confirmCorrectness();
+    return;
+  }
+  // Ctrl + M → Mark word as "done"
+    if (event.ctrlKey && event.key.toLowerCase() === 'm') {
+    if (selectedWord.value) {
+        selectedWord.value.confidence = 1.1;
+        autoSaveTranscription();
+    }
+    return;
+    }
+
+  const currentIndex = flatWords.findIndex(w => w.start === activeWordStart.value);
+
+  // 🚀 Ctrl + šipka vpravo/vlevo → mezi slovy
+  if (event.ctrlKey && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
+    event.preventDefault();
+
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight' && currentIndex < flatWords.length - 1) {
+      nextIndex++;
+    } else if (event.key === 'ArrowLeft' && currentIndex > 0) {
+      nextIndex--;
+    }
+
+    const nextWord = flatWords[nextIndex];
+    if (nextWord) {
+      jumpToWord(nextWord);
+    }
+    return;
+  }
+
+  // 🔽 Ctrl + šipka nahoru/dolů → mezi segmenty
+  if (event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    event.preventDefault();
+
+    const currentSegmentIndex = segments.findIndex(s =>
+      s.words.some(w => w.start === activeWordStart.value)
+    );
+
+    let nextSegment = null;
+    if (event.key === 'ArrowDown' && currentSegmentIndex < segments.length - 1) {
+      nextSegment = segments[currentSegmentIndex + 1];
+    } else if (event.key === 'ArrowUp' && currentSegmentIndex > 0) {
+      nextSegment = segments[currentSegmentIndex - 1];
+    }
+
+    if (nextSegment && nextSegment.words.length > 0) {
+      jumpToWord(nextSegment.words[0]); // první slovo segmentu
+    }
+  }
+};
+// Pomocná funkce pro skok na dané slovo
+const jumpToWord = (word) => {
+  selectedWord.value = word;
+  activeWordStart.value = word.start;
+
+  if (audioPlayer.value) {
+    audioPlayer.value.currentTime = word.start;
+  }
+
+  const el = wordElements.value[word.start];
+  if (el && transcriptionContainer.value) {
+    const container = transcriptionContainer.value;
+    const offsetTop = el.offsetTop - container.offsetTop;
+    const scrollTarget = offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+
+    container.scrollTo({
+      top: scrollTarget,
+      behavior: 'smooth'
+    });
+
+    // kurzor do slova
+    const range = document.createRange();
+    const selection = window.getSelection();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    el.focus();
+  }
+};
+//sledování změny paused
+watch(MediaPlayerPlaying, (isPlaying) => {
+  if (!isPlaying && activeWordStart.value) {
+    focusActiveWordElement()
+  }
+})
+const onMediaPlay = () => {
+  MediaPlayerPlaying.value = true
+  
+
+  // ✅ Odstranit focus z aktivního elementu
+  if (document.activeElement && document.activeElement.blur) {
+    document.activeElement.blur()
+  }
+
+  // ✅ Odstranit případné výběry (caret)
+  const sel = window.getSelection()
+  if (sel) {
+    sel.removeAllRanges()
+  }
+}
+
+//presun kurzoru po stopnuti mediaplayeru na zvyraznene slovo
+const focusActiveWordElement = () => {
+  const el = wordElements.value[activeWordStart.value]
+  if (el) {
+    const range = document.createRange()
+    const selection = window.getSelection()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    el.focus()
+  }
+}
+//handlekeydown pro hromadne oznaceni slov
+const handleKeyDown = (event) => {
+  if (event.ctrlKey && event.key === 'Enter') {
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed) return
+
+    const range = selection.getRangeAt(0)
+    const selectedNodes = getSpansInRange(range)
+
+    selectedNodes.forEach((el) => {
+      const start = parseFloat(el.dataset.wordStart) 
+      for (const segment of transcription.value.segments) {
+        const word = segment.words.find(w => w.start === start)
+        if (word) {
+          word.confidence = 1.0
+        }
+      }
+    })
+
+    // aktualizuj reaktivitu
+    transcription.value = { ...transcription.value }
+    autoSaveTranscription()
+  }
+}
+const getSpansInRange = (range) => {
+  const selected = []
+  const walker = document.createTreeWalker(
+    range.commonAncestorContainer,
+    NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: (node) => {
+        if (
+          node.nodeName === 'SPAN' &&
+          node.dataset.wordStart &&
+          range.intersectsNode(node)
+        ) {
+          return NodeFilter.FILTER_ACCEPT
+        }
+        return NodeFilter.FILTER_SKIP
+      }
+    }
+  )
+
+  let node = walker.nextNode()
+  while (node) {
+    selected.push(node)
+    node = walker.nextNode()
+  }
+
+  return selected
+}
+const downloadPlainText = () => {
+  const text = transcription.value.segments
+    .map(seg => seg.words.map(w => w.word).join(" "))
+    .join("\n\n");
+
+  triggerDownload(text, 'plain');
+}
+
+const downloadWithTimestamps = () => {
+  const text = transcription.value.segments
+    .map(seg => {
+      const time = `${formatTime(seg.start)} - ${formatTime(seg.end)}`
+      const content = seg.words.map(w => w.word).join(" ")
+      return `[${time}] ${content}`
+    })
+    .join("\n\n");
+
+  triggerDownload(text, 'timestamps');
+}
+
+const triggerDownload = (text, type) => {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const title = transcription.value.media?.title || "transcription";
+  a.download = `${title}${type === 'timestamps' ? '_with_timestamps' : ''}.txt`;
+  a.href = url;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const handleDownloadPlain = () => {
+  downloadPlainText()
+  showDownloadDialog.value = false
+}
+const handleDownloadWithTimestamps = () => {
+  downloadWithTimestamps()
+  showDownloadDialog.value = false
+}
+onMounted(() => {
+  fetchTranscription();
+
+  document.addEventListener('selectionchange', handleSelectionChange);
+  window.addEventListener('keydown', handleKeyboardNavigation);
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', handleSelectionChange);
+  window.removeEventListener('keydown', handleKeyboardNavigation);
+})
 </script>
 
 <style scoped>
@@ -463,7 +861,18 @@ onMounted(fetchTranscription);
   align-items: center;
   gap: 8px;
 }
+.header {
+  padding-top: 0px;
+  padding-bottom: 8px; /* Mírný prostor dole */
+}
 
+.title-container h5 {
+  margin: 0;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1.2;
+  text-decoration: underline;
+}
 /* 🔹 Stylizace tužtičky */
 .edit-icon {
   font-size: 1.0rem;
@@ -494,6 +903,11 @@ onMounted(fetchTranscription);
   display: flex;
   justify-content: flex-start;
   padding: 10px 10px;
+}
+.transcription-container span {
+  font-size: 1.05rem; /* nebo třeba 1.4rem pro větší efekt */
+  line-height: 1.8;
+  padding: 2px;
 }
 .TranscriptionButton{
   border-radius: 8px;
@@ -543,6 +957,18 @@ onMounted(fetchTranscription);
 .model-options .q-radio:active {
   transform: scale(1.1);
 }
-
-
+.segment-line {
+  margin-bottom: 5px;
+  
+}
+.shortcut-header {
+  position: absolute;
+  top: 10px;
+  right: 20px;
+  z-index: 10;
+}
+.text-green {
+  color: green;
+  font-weight: bold;
+}
 </style>

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
 
@@ -49,7 +49,7 @@ class TranscriptionBase(BaseModel):
 
 class TranscriptionCreate(TranscriptionBase):
     model: Optional[str] = None  # ✅ Přidáno, aby bylo možné uložit model přepisu
-
+    folder: Optional[str] = "Personal"
 class TranscriptionResponse(BaseModel):
     id: int
     text: str
@@ -57,6 +57,8 @@ class TranscriptionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     progress: float
+    deleted_at: Optional[datetime] = None
+    status_flag: Optional[int] = None
     owner: UserResponse
 
     class Config:
@@ -66,3 +68,25 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     username: str
+
+class ShareRequest(BaseModel):
+    target_user_id: int
+
+class FolderCreateRequest(BaseModel):
+    folder: str
+
+class FolderRenameRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+class BulkSetFlagRequest(BaseModel):
+    transcription_ids: List[int]
+    new_status: int
+
+class BulkMoveToTrashRequest(BaseModel):
+    transcription_ids: List[int]
+
+class UserSettingsUpdate(BaseModel):
+    username: Optional[str] = Field(None, min_length=3)
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(None, min_length=4)

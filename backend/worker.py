@@ -133,7 +133,7 @@ def transcription_worker():
             print(f"📌 Worker nalezl nevyřízený přepis: ID {transcription.id}, Media ID {transcription.media_id}")
 
             # **Zabránění duplikovaného přepisu**
-            transcription.progress = 10.0  # Označit jako zpracovávané
+            transcription.progress = 1.0  # Označit jako zpracovávané
             db.commit()
 
             # Spuštění přepisu ve vlákně

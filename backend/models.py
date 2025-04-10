@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text, Table, DateTime, Float
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, Table, DateTime, Float, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -46,6 +46,11 @@ class Transcription(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # Poslední změna
     progress = Column(Float, default=0.0)  # Stav v procentech
     model = Column(String, nullable=True)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+    status_flag = Column(Integer, default=0, nullable=False)
+    folder = Column(String, default="Personal", nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     media = relationship("Media", back_populates="transcription")
     

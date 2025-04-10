@@ -6,6 +6,13 @@
 
       <!-- Krok 1: Nahrání souborů -->
       <div v-if="step === 1">
+        <q-select
+          v-model="selectedFolder"
+          :options="availableFolders"
+          label="Choose Folder"
+          outlined
+          class="q-mb-md"
+        />
         <q-file v-model="files" label="Upload files" multiple outlined class="q-mb-md" />
         <q-btn label="Next" color="primary" @click="step = 2" :disable="files.length === 0" />
       </div>
@@ -35,7 +42,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from 'boot/axios'
 
@@ -45,11 +52,14 @@ const files = ref([])
 const selectedModel = ref(null)
 const uploading = ref(false)
 const errorMessage = ref("")
+//folder select
+const selectedFolder = ref('Personal')
+const availableFolders = ref()
 
 const models = [
-  { label: 'Model A', value: 'model_a' },
-  { label: 'Model B', value: 'model_b' },
-  { label: 'Model C', value: 'model_c' }
+  { label: 'Base', value: 'model_a' },
+  { label: 'Medium', value: 'model_b' },
+  { label: 'Large', value: 'model_c' }
 ]
 
 const saveToDatabase = async () => {
@@ -79,6 +89,7 @@ const saveToDatabase = async () => {
         media_id: response.data.id,
         text: '',
         model: selectedModel.value,
+        folder: selectedFolder.value.value,
         progress: 0.0
       }, {
         headers: { Authorization: `Bearer ${token}` }
@@ -89,10 +100,32 @@ const saveToDatabase = async () => {
     router.push('/home');  // ✅ Přesměrování na homepage po uploadu
   } catch (error) {
     uploading.value = false;
-    errorMessage.value = 'Error uploading and saving files: ' + (error.response?.data?.detail || error.message);
+    errorMessage.value = 'Error uploading and saving files: ' + JSON.stringify(error.response?.data || error.message);
     console.error(errorMessage.value);
   }
 }
+
+//ziskani vsech moznych slozek
+const fetchFolders = async () => {
+  try {
+    const token = localStorage.getItem('token')
+    const response = await api.get('/folders', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    availableFolders.value = response.data.map(f => ({
+      label: f.folder,
+      value: f.folder
+    }))
+  } catch (error) {
+    console.error("Chyba při načítání složek:", error)
+  }
+}
+
+onMounted(() => {
+  fetchFolders()
+})
+
 </script>
 
 <style scoped>

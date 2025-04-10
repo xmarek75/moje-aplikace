@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
-from sqlalchemy.orm import Session
-from sqlalchemy import desc 
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Query, Body
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import desc, func, case, or_, and_
 from database import engine, Base, get_db
 from models import User, Media, Transcription
-from schemas import UserCreate, UserResponse, Token, MediaCreate,ModelChangeRequest, MediaRenameRequest, MediaResponse, TranscriptionCreate, TranscriptionResponse, UserLogin
+from schemas import UserSettingsUpdate, BulkMoveToTrashRequest,BulkSetFlagRequest, FolderRenameRequest,UserCreate,FolderCreateRequest, ShareRequest, UserResponse, Token, MediaCreate,ModelChangeRequest, MediaRenameRequest, MediaResponse, TranscriptionCreate, TranscriptionResponse, UserLogin
 from auth import hash_password, verify_password, create_access_token, get_current_user
 from datetime import timedelta, datetime
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +16,7 @@ from worker import transcription_worker
 from threading import Thread
 import json 
 from fastapi.responses import JSONResponse
+from auth import pwd_context
 app = FastAPI()
 
 # Povolení CORS (pro komunikaci mezi frontendem a backendem)
@@ -81,6 +82,7 @@ def get_my_transcriptions(
         db.query(Transcription)
         .join(Media)
         .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.is_deleted == False)
         .order_by(desc(Transcription.updated_at))
         .all()
     )
@@ -97,6 +99,7 @@ def get_my_transcriptions(
             "created_at": t.created_at,
             "updated_at": t.updated_at,
             "progress": t.progress,
+            "status_flag":t.status_flag,
             "owner": {
                 "id": t.media.owner.id,
                 "username": t.media.owner.username,
@@ -121,16 +124,18 @@ def create_transcription(
         text=transcription.text,
         media_id=transcription.media_id,
         model=transcription.model,
+        folder=transcription.folder,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
-        progress=0.0
+        progress=0.0,
+        status_flag=0,
+        
     )
 
     db.add(new_transcription)
     db.commit()
     db.refresh(new_transcription)
 
-    # ✅ Přidáno `owner`
     return {
         "id": new_transcription.id,
         "text": new_transcription.text,
@@ -142,6 +147,7 @@ def create_transcription(
         "created_at": new_transcription.created_at,
         "updated_at": new_transcription.updated_at,
         "progress": new_transcription.progress,
+        "status_flag": new_transcription.status_flag,
         "owner": {
             "id": current_user.id,
             "username": current_user.username,
@@ -204,6 +210,37 @@ def delete_transcription(
 
     return {"message": "Transkripce a přidružené médium byly úspěšně odstraněny"}
 
+#ziskani sdileneho prepisu
+@app.get("/transcriptions/shared")
+def get_shared_transcriptions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    print("🔹 get_shared_transcriptions() spuštěn pro:", current_user.username)
+
+    shared_transcriptions = (
+        db.query(Transcription)
+        .join(Transcription.shared_with)
+        .filter(User.id == current_user.id)
+        .order_by(desc(Transcription.updated_at))
+        .all()
+    )
+
+    print("🔸 Nalezeno sdílených přepisů:", len(shared_transcriptions))
+
+    result = []
+    for t in shared_transcriptions:
+        print("➡️ Přepis:", t.id, "| Název:", t.media.title if t.media else "⚠️None")
+        result.append({
+            "id": t.id,
+            "title": t.media.title if t.media else "None",
+            "owner": t.media.owner.username if t.media and t.media.owner else "None",
+            "created_at": t.created_at.isoformat(),
+            "updated_at": t.updated_at.isoformat()
+        })
+
+    return result
+
 #  Přidání GET endpointu pro načtení konkrétní transkripce
 @app.get("/transcriptions/{transcription_id}", response_model=TranscriptionResponse)
 def get_transcription(transcription_id: int, db: Session = Depends(get_db)):
@@ -248,6 +285,32 @@ def get_transcription(transcription_id: int, db: Session = Depends(get_db)):
     #         "email": transcription.media.owner.email,
     #     },
     # }
+#  Přidání GET endpointu pro načtení konkrétní transkripce pri tiptap
+@app.get("/transcriptions-test/{transcription_id}", response_model=TranscriptionResponse)
+def get_transcription_test(transcription_id: int, db: Session = Depends(get_db)):
+    transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
+
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transkripce nebyla nalezena")
+    #ziskani pripojeneho media
+    media = db.query(Media).filter(Media.id == transcription.media_id).first()
+    try:
+        transcription_data = json.loads(transcription.text)  # ✅ Načtení JSON z databáze
+    except json.JSONDecodeError:
+        transcription_data = {"text": transcription.text, "segments": []}  # ✅ Pokud není JSON, vytvořit základní odpověď
+    
+    # pridani media do odpovedi
+    transcription_data["media"] = { 
+        "id": media.id,
+        "title": media.title,
+        "file_path": f"/uploads/{os.path.basename(media.file_path)}" # z absolutni na relativni adresu
+    } if media else None
+
+    # Přidání modelu do odpovědi
+    transcription_data["id"] = transcription.id
+    transcription_data["model"] = transcription.model
+
+    return JSONResponse(content=transcription_data)
 
 @app.put("/transcriptions/{transcription_id}")
 def update_transcription(transcription_id: int, updated_data: dict, db: Session = Depends(get_db)):
@@ -302,3 +365,420 @@ def change_model(transcription_id: int,updated_data:ModelChangeRequest, db: Sess
 
     return {"message": "Transcription model updated successfully","trasncription": transcription}
    
+#vyhledavani uzivatelu podle username
+@app.get("/users/search", response_model=List[UserResponse])
+def search_users(
+    query: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    users = (
+        db.query(User)
+        .filter(
+            (User.username.ilike(f"%{query}%")) |
+            (User.email.ilike(f"%{query}%"))
+        )
+        .filter(User.id != current_user.id)  # vyloučit sebe
+        .limit(10)
+        .all()
+    )
+
+    return users
+#sdileni prepisu
+@app.post("/transcriptions/{transcription_id}/share")
+def share_transcription(
+    transcription_id: int,
+    data: ShareRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transkripce nebyla nalezena")
+
+    if transcription.media.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Nemáte oprávnění sdílet tuto transkripci")
+
+    target_user = db.query(User).filter(User.id == data.target_user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Cílový uživatel nenalezen")
+
+    if target_user in transcription.shared_with:
+        return {"message": "Tento přepis je už sdílen s tímto uživatelem"}
+
+    transcription.shared_with.append(target_user)
+    db.commit()
+
+    return {"message": "Přepis byl úspěšně sdílen"}
+#pro zobrazeni slozek
+@app.get("/folders")
+def get_folders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    folders = (
+        db.query(
+            Transcription.folder.label("folder"),
+            func.min(Transcription.created_at).label("created"),
+            func.max(Transcription.updated_at).label("last_update"),
+            func.sum(
+                case(
+                    (Transcription.progress < 101, 1),
+                    else_=0
+                    )
+                ).label("count")
+        )
+        .outerjoin(Media)
+        .filter(
+            Transcription.is_deleted == False,
+            or_(
+                Media.owner_id == current_user.id,
+                and_(
+                    Transcription.media_id == None,
+                    Transcription.created_by_id == current_user.id
+                )
+            )
+        )
+        .filter(Transcription.is_deleted == False)
+        
+        .group_by(Transcription.folder)
+        .order_by(func.max(Transcription.updated_at).desc())
+        .all()
+    )
+
+    return [
+        {
+            "folder": f.folder,
+            "created": f.created,
+            "last_update": f.last_update,
+            "count": f.count
+        }
+        for f in folders
+    ]
+#ziskani prepisu podle slozky
+@app.get("/transcriptions/by-folder/{folder_name}")
+def get_transcriptions_by_folder(
+    folder_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.folder == folder_name)
+        .filter(Transcription.is_deleted == False)
+        .order_by(desc(Transcription.updated_at))
+        .all()
+    )
+
+    return [
+        {
+            "id": t.id,
+            "text": t.text,
+            "media": {
+                "id": t.media.id,
+                "title": t.media.title,
+                "file_path": t.media.file_path
+            },
+            "created_at": t.created_at,
+            "updated_at": t.updated_at,
+            "progress": t.progress,
+            "owner": {
+                "id": t.media.owner.id,
+                "username": t.media.owner.username,
+                "email": t.media.owner.email
+            },
+            "folder": t.folder,
+            "status_flag": t.status_flag
+        }
+        for t in transcriptions
+    ]
+
+#endpoint pro vytrvoreni slozky
+@app.post("/folders")
+def create_folder(
+    request: FolderCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # ✅ Vytvoří se prázdná transkripce s daným názvem složky (bez media/textu)
+    new_transcription = Transcription(
+        text="",  # prázdné
+        media_id=None,  # žádné video
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        progress=101,
+        model="",
+        is_deleted=False,
+        folder=request.folder,
+        status_flag=0,
+        created_by_id=current_user.id
+    )
+
+    db.add(new_transcription)
+    db.commit()
+    db.refresh(new_transcription)
+
+    return {"message": f"Složka '{request.folder}' vytvořena"}
+
+#endpoint pro zmenu nazvu slozky
+@app.put("/folders/rename")
+def rename_folder(
+    request: FolderRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcriptions = (
+        db.query(Transcription)
+        .outerjoin(Media)
+        .filter(
+            (Media.owner_id == current_user.id) | (Transcription.media_id == None),
+            Transcription.folder == request.old_name
+        )
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="No transcriptions found in the specified folder")
+
+    for transcription in transcriptions:
+        transcription.folder = request.new_name
+
+    db.commit()
+
+    return {"message": f"Folder renamed from '{request.old_name}' to '{request.new_name}'"}
+
+#endpoint pro hromadne nastaveni flagu
+@app.put("/transcriptions/action/bulk-set-flag")
+def bulk_set_flag(
+    request: BulkSetFlagRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.id.in_(request.transcription_ids))
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="No matching transcriptions found.")
+
+    for t in transcriptions:
+        t.status_flag = request.new_status
+        t.updated_at = datetime.utcnow()
+
+    db.commit()
+
+    return {"message": f"Updated {len(transcriptions)} transcriptions"}
+
+#endpoint pro hromadny presun do kose
+@app.put("/transcriptions/actions/move-to-trash")
+def bulk_move_to_trash(
+    request: BulkMoveToTrashRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.id.in_(request.transcription_ids))
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="No matching transcriptions found.")
+
+    for t in transcriptions:
+        t.is_deleted = True
+        t.deleted_at = datetime.utcnow()
+
+    db.commit()
+
+    return {"message": f"Moved to trash {len(transcriptions)} transcriptions"}
+
+#endpoint pro hromadnou obnovu z kose
+@app.put("/transcriptions/actions/remove-from-trash")
+def bulk_remove_from_trash(
+    request: BulkMoveToTrashRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.id.in_(request.transcription_ids))
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="No matching transcriptions found.")
+
+    for t in transcriptions:
+        t.is_deleted = False
+        t.deleted_at = None
+        t.updated_at = datetime.utcnow()
+
+    db.commit()
+
+    return {"message": f"Moved to trash {len(transcriptions)} transcriptions"}
+
+#endpoint pro ziskani smazanych prepisu
+@app.get("/transcriptions/fetch/trash", response_model=List[TranscriptionResponse])
+def get_deleted_transcriptions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    trashed = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.is_deleted == True)
+        .order_by(desc(Transcription.updated_at))
+        .all()
+    )
+    
+    return [
+        {
+            "id": t.id,
+            "text": t.text,
+            "media": {
+                "id": t.media.id,
+                "title": t.media.title,
+                "file_path": t.media.file_path
+            },
+            "created_at": t.created_at,
+            "updated_at": t.updated_at,
+            "progress": t.progress,
+            "deleted_at": t.deleted_at,
+            "owner": {
+                "id": t.media.owner.id,
+                "username": t.media.owner.username,
+                "email": t.media.owner.email
+            }
+        }
+        for t in trashed
+    ]
+#endpoint pro permanentni smazani vsech vybranych prepisu a jejich media
+@app.delete("/transcriptions/actions/permanently-delete")
+def bulk_permanently_delete(
+    request: BulkMoveToTrashRequest,  
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.id.in_(request.transcription_ids))
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="No matching transcriptions found.")
+
+    for t in transcriptions:
+        # Smazat soubor z disku
+        if t.media and os.path.exists(t.media.file_path):
+            os.remove(t.media.file_path)
+
+        # Smazat záznam media
+        if t.media:
+            db.delete(t.media)
+
+        db.delete(t)
+
+    db.commit()
+
+    return {"message": f"Permanently deleted {len(transcriptions)} transcriptions"}
+
+#endpoint pro zmenu heslo,jmena, emailu
+@app.put("/users/settings")
+def update_user_settings(
+    data: UserSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Kontrola uniqueness pokud se mění username nebo email
+    if data.username and data.username != user.username:
+        if db.query(User).filter(User.username == data.username).first():
+            raise HTTPException(status_code=400, detail="Username already in use")
+        user.username = data.username
+
+    if data.email and data.email != user.email:
+        if db.query(User).filter(User.email == data.email).first():
+            raise HTTPException(status_code=400, detail="Email already in use")
+        user.email = data.email
+
+    if data.password:
+        user.hashed_password = pwd_context.hash(data.password)
+
+    db.commit()
+    db.refresh(user)
+
+    return {"message": "Settings updated successfully"}
+#endpoint pro ziskani prepisu ktere se zrovna prepisuji- transcribing
+@app.get("/transcribing", response_model=List[TranscriptionResponse])
+def get_transcribing_transcriptions(
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    my_transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.progress<100)
+        .filter(Transcription.is_deleted == False)
+        .order_by(desc(Transcription.updated_at))
+        .all()
+    )
+    
+    return [
+        {
+            "id": t.id,
+            "text": t.text,
+            "media": {
+                "id": t.media.id,
+                "title": t.media.title,
+                "file_path": t.media.file_path
+            },
+            "created_at": t.created_at,
+            "updated_at": t.updated_at,
+            "progress": t.progress,
+            "status_flag":t.status_flag,
+            "owner": {
+                "id": t.media.owner.id,
+                "username": t.media.owner.username,
+                "email": t.media.owner.email
+            }
+        }
+        for t in my_transcriptions
+    ]
+
+@app.delete("/permanently-delete-all")
+def permanently_delete_all(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    deleted_items = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.is_deleted == True)
+        .all()
+    )
+
+    for item in deleted_items:
+        db.delete(item)
+
+    db.commit()
+    return {"detail": f"{len(deleted_items)} trashed transcriptions permanently deleted"}

@@ -18,6 +18,9 @@
                 <q-item clickable v-close-popup @click="goToHome">
                   <q-item-section>Home Page</q-item-section>
                 </q-item>
+                <q-item clickable v-close-popup @click="Settings">
+                  <q-item-section>Settings</q-item-section>
+                </q-item>
                 <q-item clickable v-close-popup @click="logout">
                   <q-item-section>Log Out</q-item-section>
                 </q-item>
@@ -74,6 +77,9 @@ const goToIndexPage = () => {
 // Funkce pro přesměrování na HomePage
 const goToHome = () => {
   router.push('/home')
+}
+const Settings = () => {
+  router.push('/settings')
 }
 </script>
 
