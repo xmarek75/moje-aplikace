@@ -20,7 +20,7 @@ class UserLogin(BaseModel):
     username: str
     password: str
 
-# ✅ Přidání MediaBase (dříve VideoBase)
+
 class MediaBase(BaseModel):
     title: str
     file_path: str
@@ -42,18 +42,18 @@ class MediaRenameRequest(BaseModel):
 class ModelChangeRequest(BaseModel):
     model: str
 
-# ✅ Oprava TranscriptionBase (použití media_id místo video_id)
+
 class TranscriptionBase(BaseModel):
     text: str
     media_id: int
 
 class TranscriptionCreate(TranscriptionBase):
-    model: Optional[str] = None  # ✅ Přidáno, aby bylo možné uložit model přepisu
+    model: Optional[str] = None  #  Přidáno, aby bylo možné uložit model přepisu
     folder: Optional[str] = "Personal"
 class TranscriptionResponse(BaseModel):
     id: int
     text: str
-    media: MediaResponse  # ✅ Opraveno z VideoResponse na MediaResponse
+    media: MediaResponse  
     created_at: datetime
     updated_at: datetime
     progress: float

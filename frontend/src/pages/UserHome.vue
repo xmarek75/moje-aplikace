@@ -211,10 +211,17 @@
           />
         </div>
         <div v-if="selectedTab === 'trash'">
-          <div class="row items-center justify-between q-mb-md q-pt-md" @click="showEmptyTrashDialog = true">
+          <div 
+            class="row items-center justify-between q-mb-md q-pt-md"
+            @click="showEmptyTrashDialog = true"
+            @mouseenter="hoverTrash = true"
+            @mouseleave="hoverTrash = false"
+            >
             <div class="text-h6 text-primary">
-              <q-icon name="delete" class="q-mr-sm" />
-              Trash
+              <q-icon 
+              name="delete"
+              :class="{ 'trash-animate': hoverTrash }" />
+              <span :class="{ 'text-animate': hoverTrash }">Trash</span>
             </div>
           </div>
           <q-table
@@ -436,6 +443,7 @@ const selectedIds = ref([])
 //hromadny vyber v kosi
 const selectedDeletedIds = ref([])
 const showEmptyTrashDialog = ref(false)
+const hoverTrash = ref(false)
 //smazane polozky
 const trashedTranscriptions = ref([])
 //polling interval, pro aktualizaci progresu u prepisujicich prepisu
@@ -473,7 +481,7 @@ const navigateTo = (route) => {
   router.push(route)
 }
 //otevreni prepisu
-const openTranscription = (row) => {
+const openTranscription =  (row) => {
   if (row.progress < 100) {
     $q.notify({
       type: 'warning',
@@ -482,8 +490,25 @@ const openTranscription = (row) => {
     })
     return
   }
-  router.push(`/transcription/${row.id}`)
-}
+  try {
+    
+    router.push(`/transcription/${row.id}`);
+  } catch (err) {
+    if (err.response && err.response.status === 403) {
+      $q.notify({
+        type: 'negative',
+        message: 'Tato transkripce je právě upravována jiným uživatelem.',
+        icon: 'block'
+      });
+    } else {
+      $q.notify({
+        type: 'negative',
+        message: 'Nepodařilo se načíst transkripci.',
+        icon: 'error'
+      });
+    }
+  }
+};
 // Načtení transkripcí při spuštění
 const fetchTranscriptions = async () => {
   try {
@@ -946,5 +971,15 @@ const stopPolling = () => {
 }
 .finished-row {
   background-color: #e8f5e9 !important; /* světle zelené pozadí */
+}
+.trash-animate {
+  animation: shake 1s ease-in-out;
+}
+@keyframes shake {
+  0% { transform: rotate(0); }
+  25% { transform: rotate(-10deg); }
+  50% { transform: rotate(10deg); }
+  75% { transform: rotate(-6deg); }
+  100% { transform: rotate(0); }
 }
 </style>

@@ -51,6 +51,9 @@ class Transcription(Base):
     status_flag = Column(Integer, default=0, nullable=False)
     folder = Column(String, default="Personal", nullable=False)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    locked_at = Column(DateTime, nullable=True)
+    locked_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
 
     media = relationship("Media", back_populates="transcription")
     

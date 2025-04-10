@@ -220,7 +220,9 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from 'boot/axios';
+import { useQuasar } from 'quasar'
 
+const $q = useQuasar()
 const route = useRoute();
 const router = useRouter();
 const transcription = ref({ text: "", segments: [], media: null,id: null, model: '' });
@@ -264,6 +266,8 @@ const fetchTranscription = async () => {
     console.error("Chyba při načítání transkripce:", error);
   }
 };
+
+
 
 // ✅ Automatické ukládání (debounce 1 sekunda)
 const autoSaveTranscription = () => {
@@ -722,17 +726,42 @@ const handleDownloadWithTimestamps = () => {
   downloadWithTimestamps()
   showDownloadDialog.value = false
 }
-onMounted(() => {
-  fetchTranscription();
+onMounted(async () => {
+  const id = route.params.id;
 
-  document.addEventListener('selectionchange', handleSelectionChange);
-  window.addEventListener('keydown', handleKeyboardNavigation);
-})
+  try {
+    await api.put(`/transcriptions/${id}/lock`, null, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    });
 
-onBeforeUnmount(() => {
+    // ✅ Pokud zámek úspěšný, načti transkripci
+    await fetchTranscription();
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    window.addEventListener('keydown', handleKeyboardNavigation);
+
+  } catch (err) {
+    if (err.response?.status === 403) {
+      $q.notify({
+        type: 'negative',
+        message: 'This transcription is already being edited by someone else.'
+      });
+      router.push('/home');
+    } else {
+      console.error("Chyba při zamykání přepisu:", err);
+    }
+  }
+});
+
+onBeforeUnmount(async () => {
+  // 🧹 Odebrání listenerů
   document.removeEventListener('selectionchange', handleSelectionChange);
   window.removeEventListener('keydown', handleKeyboardNavigation);
-})
+
+  // 🔓 Odemknutí přepisu
+  const id = route.params.id;
+  
+});
 </script>
 
 <style scoped>

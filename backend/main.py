@@ -222,6 +222,7 @@ def get_shared_transcriptions(
         db.query(Transcription)
         .join(Transcription.shared_with)
         .filter(User.id == current_user.id)
+        .filter(Transcription.is_deleted == False)
         .order_by(desc(Transcription.updated_at))
         .all()
     )
@@ -243,11 +244,19 @@ def get_shared_transcriptions(
 
 #  Přidání GET endpointu pro načtení konkrétní transkripce
 @app.get("/transcriptions/{transcription_id}", response_model=TranscriptionResponse)
-def get_transcription(transcription_id: int, db: Session = Depends(get_db)):
+def get_transcription(transcription_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
 
     if not transcription:
         raise HTTPException(status_code=404, detail="Transkripce nebyla nalezena")
+    # 🔒 Kontrola zamčení
+    if (
+        transcription.locked_by_id
+        and transcription.locked_by_id != current_user.id
+        and transcription.locked_until
+        and transcription.locked_until > datetime.utcnow()
+    ):
+        raise HTTPException(status_code=403, detail="Tato transkripce je právě upravována jiným uživatelem.")
     #ziskani pripojeneho media
     media = db.query(Media).filter(Media.id == transcription.media_id).first()
     try:
@@ -782,3 +791,21 @@ def permanently_delete_all(
 
     db.commit()
     return {"detail": f"{len(deleted_items)} trashed transcriptions permanently deleted"}
+
+@app.put("/transcriptions/{transcription_id}/lock")
+def lock_transcription(transcription_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
+
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+
+    now = datetime.utcnow()
+    if transcription.locked_by_id and transcription.locked_by_id != current_user.id:
+        # pokud poslední ping byl méně než 60 sekund zpět, uzamčeno
+        if transcription.locked_at and (now - transcription.locked_at).total_seconds() < 60:
+            raise HTTPException(status_code=403, detail="Transcription is locked by another user")
+
+    transcription.locked_by_id = current_user.id
+    transcription.locked_at = now
+    db.commit()
+    return {"message": "Locked"}
