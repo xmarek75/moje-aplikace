@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, func, case, or_, and_
 from database import engine, Base, get_db
 from models import User, Media, Transcription
-from schemas import UserSettingsUpdate, BulkMoveToTrashRequest,BulkSetFlagRequest, FolderRenameRequest,UserCreate,FolderCreateRequest, ShareRequest, UserResponse, Token, MediaCreate,ModelChangeRequest, MediaRenameRequest, MediaResponse, TranscriptionCreate, TranscriptionResponse, UserLogin
-from auth import hash_password, verify_password, create_access_token, get_current_user
+from schemas import RefreshTokenRequest, WordUpdateRequest, UserSettingsUpdate, BulkMoveToTrashRequest,BulkSetFlagRequest, FolderRenameRequest,UserCreate,FolderCreateRequest, ShareRequest, UserResponse, Token, MediaCreate,ModelChangeRequest, MediaRenameRequest, MediaResponse, TranscriptionCreate, TranscriptionResponse, UserLogin
+from auth import  hash_password, verify_password, create_access_token, get_current_user, decode_token, create_refresh_token
 from datetime import timedelta, datetime
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -70,7 +70,13 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Neplatné přihlašovací údaje")
 
     access_token = create_access_token({"sub": db_user.username}, expires_delta=timedelta(minutes=30))
-    return {"access_token": access_token, "token_type": "bearer", "username": db_user.username}
+    refresh_token = create_refresh_token(db_user.username)
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "username": db_user.username
+}
 
 # Získání všech přepisů daného uživatele
 @app.get("/transcriptions/my", response_model=List[TranscriptionResponse])
@@ -78,15 +84,28 @@ def get_my_transcriptions(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    my_transcriptions = (
+    # Vlastní přepisy
+    own_transcriptions = (
         db.query(Transcription)
         .join(Media)
         .filter(Media.owner_id == current_user.id)
         .filter(Transcription.is_deleted == False)
+        .all()
+    )
+
+    # Sdílené přepisy
+    shared_transcriptions = (
+        db.query(Transcription)
+        .join(Transcription.shared_with)
+        .filter(User.id == current_user.id)
+        .filter(Transcription.is_deleted == False)
         .order_by(desc(Transcription.updated_at))
         .all()
     )
-    
+
+    all_transcriptions = own_transcriptions + shared_transcriptions
+    seen_ids = set()
+
     return [
         {
             "id": t.id,
@@ -99,14 +118,14 @@ def get_my_transcriptions(
             "created_at": t.created_at,
             "updated_at": t.updated_at,
             "progress": t.progress,
-            "status_flag":t.status_flag,
+            "status_flag": t.status_flag,
             "owner": {
                 "id": t.media.owner.id,
                 "username": t.media.owner.username,
                 "email": t.media.owner.email
             }
         }
-        for t in my_transcriptions
+        for t in all_transcriptions if t.id not in seen_ids and not seen_ids.add(t.id)
     ]
 
 # Vytvoření přepisu
@@ -237,7 +256,8 @@ def get_shared_transcriptions(
             "title": t.media.title if t.media else "None",
             "owner": t.media.owner.username if t.media and t.media.owner else "None",
             "created_at": t.created_at.isoformat(),
-            "updated_at": t.updated_at.isoformat()
+            "updated_at": t.updated_at.isoformat(),
+            "progress" :  t.progress
         })
 
     return result
@@ -324,7 +344,7 @@ def get_transcription_test(transcription_id: int, db: Session = Depends(get_db))
 @app.put("/transcriptions/{transcription_id}")
 def update_transcription(transcription_id: int, updated_data: dict, db: Session = Depends(get_db)):
     transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
-
+    
     if not transcription:
         raise HTTPException(status_code=404, detail="Transkripce nebyla nalezena")
 
@@ -343,6 +363,38 @@ def update_transcription(transcription_id: int, updated_data: dict, db: Session 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chyba při ukládání: {str(e)}")
+
+# @app.put("/transcriptions/{transcription_id}")
+# def update_transcription(
+#     transcription_id: int,
+#     data: dict = Body(...),
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
+
+#     if not transcription:
+#         raise HTTPException(status_code=404, detail="Transcription not found")
+
+#     # Optional: Check permissions here if needed
+
+#     transcription.text = data.get("text", transcription.text)
+#     transcription.model = data.get("model", transcription.model)
+#     transcription.updated_at = datetime.utcnow()
+
+#     # Update segments
+#     segments_data = data.get("segments")
+#     if segments_data:
+#         transcription.segments = segments_data  # pokud je uložen jako JSONField
+
+#     # Update words pokud je ve tvé DB také samostatné pole
+#     words_data = data.get("words")
+#     if words_data is not None:
+#         transcription.words = words_data  # jen pokud máš `words` jako samostatné pole
+
+#     db.commit()
+#     return {"message": "Transcription updated"}
+
 
 #prejmenovani media title
 @app.put("/media/{media_id}/rename")
@@ -729,12 +781,14 @@ def update_user_settings(
         user.email = data.email
 
     if data.password:
-        user.hashed_password = pwd_context.hash(data.password)
+        user.password = pwd_context.hash(data.password)
 
     db.commit()
     db.refresh(user)
 
-    return {"message": "Settings updated successfully"}
+    return {
+        "message": "Settings updated successfully"
+        }
 #endpoint pro ziskani prepisu ktere se zrovna prepisuji- transcribing
 @app.get("/transcribing", response_model=List[TranscriptionResponse])
 def get_transcribing_transcriptions(
@@ -785,8 +839,18 @@ def permanently_delete_all(
         .filter(Transcription.is_deleted == True)
         .all()
     )
+    if not deleted_items:
+        raise HTTPException(status_code=404, detail="Trash is empty")
 
     for item in deleted_items:
+       # Smazat soubor z disku
+        if item.media and os.path.exists(item.media.file_path):
+            os.remove(item.media.file_path)
+
+        # Smazat záznam media
+        if item.media:
+            db.delete(item.media)
+
         db.delete(item)
 
     db.commit()
@@ -809,3 +873,107 @@ def lock_transcription(transcription_id: int, db: Session = Depends(get_db), cur
     transcription.locked_at = now
     db.commit()
     return {"message": "Locked"}
+#vraci informace o uzivateli
+@app.get("/users/me", response_model=UserResponse)
+def get_current_user_info(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email
+    }
+#endpoint pro partial update, kvuli zrychleni ukladani
+@app.put("/transcriptions/{transcription_id}/partial-update")
+def partial_update_transcription(
+    transcription_id: int,
+    partial_data: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transkripce nenalezena")
+    
+    try:
+        current_data = json.loads(transcription.text)
+    except:
+        raise HTTPException(status_code=400, detail="Neplatný formát transkripce")
+
+    updated = False
+    for segment in current_data.get("segments", []):
+        for word in segment.get("words", []):
+            key = str(word["start"])
+            if key in partial_data:
+                word["word"] = partial_data[key]
+                updated = True
+
+    if updated:
+        transcription.text = json.dumps(current_data)
+        transcription.updated_at = datetime.utcnow()
+        db.commit()
+
+    return {"message": "Částečná aktualizace provedena"}
+
+@app.put("/transcriptions/{transcription_id}/update-word")
+def update_single_word(
+    transcription_id: int,
+    update: WordUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcription = db.query(Transcription).filter_by(id=transcription_id).first()
+
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+
+    try:
+        data = json.loads(transcription.text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid transcription format")
+
+    updated = False
+
+    for segment in data.get("segments", []):
+        print("🔎 kontroluji segment ID:", segment.get("segment_id"), "==", update.segment_id)
+        if segment.get("segment_id") == update.segment_id:
+            for word in segment.get("words", []):
+                print("    🟠 kontroluji word.start:", word.get("start"), "==", update.word_start)
+                if float(word.get("start")) == float(update.word_start):
+                    word["word"] = update.new_word
+                    updated = True
+                    break
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Word or segment not found")
+
+    transcription.text = json.dumps(data)
+    transcription.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"message": "Word updated successfully"}
+
+# token refresh
+@app.post("/auth/refresh", response_model=Token)
+def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_db)):
+    print("prijaty token:", request.refresh_token)
+
+    try:
+        payload = decode_token(request.refresh_token)
+        username = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token is invalid or expired")
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_access_token = create_access_token(data={"sub": username})
+    new_refresh_token = create_refresh_token(username)
+
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,  # ✅ přidáno
+        "token_type": "bearer",
+        "username": user.username            # ✅ opraveno z "bearer"
+    }

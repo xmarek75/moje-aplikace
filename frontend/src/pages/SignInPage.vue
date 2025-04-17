@@ -26,6 +26,7 @@ const login = async () => {
     const response = await api.post('/auth/login', { username: username.value, password: password.value })
     localStorage.setItem('user', response.data.username)
     localStorage.setItem('token', response.data.access_token)
+    localStorage.setItem("refresh_token", response.data.refresh_token);
     window.dispatchEvent(new Event('auth-changed'))
     router.push('/home')
   } catch (error) {

@@ -18,7 +18,7 @@ compute_type = "int8"
 #nacteni modelu
 print("Loading models...")
 modelBase = WhisperModel("base", device=device, compute_type=compute_type)
-modelMedium = WhisperModel("medium", device=device, compute_type=compute_type)
+#modelMedium = WhisperModel("medium", device=device, compute_type=compute_type)
 #modelLarge = WhisperModel("large", device=device, compute_type=compute_type)
 #whisper_model = FasterWhisper(model_size="base", device="cpu", compute_type="int8")
 # ✅ Funkce pro výběr správného modelu podle hodnoty z frontend
@@ -97,6 +97,7 @@ def transcribe_audio(media_id: int, modelType: str):
                     "start": segment.start,
                     "end": segment.end,
                     "text": segment.text,
+                    "segment_id": segment.id,
                     "words": [
                         {
                             "word": word.word,

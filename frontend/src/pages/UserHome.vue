@@ -68,6 +68,9 @@
                       <q-item clickable v-close-popup @click="markAsFinished">
                         <q-item-section>✅ Mark as Finished</q-item-section>
                       </q-item>
+                      <q-item clickable v-close-popup @click="markAsWorkingOn">
+                        <q-item-section>💼 Mark as Working On</q-item-section>
+                      </q-item>
                       <q-item clickable v-close-popup @click="unMarked">
                         <q-item-section>↩️ Unmark</q-item-section>
                       </q-item>
@@ -83,7 +86,11 @@
             <template v-slot:body="props">
               <q-tr 
               :props="props"
-              :class="{ 'finished-row': props.row.status_flag === 2 }"
+              :class="{ 
+                'finished-row': props.row.status_flag === 2 , 
+                'working-on-row': props.row.status_flag === 1,
+                'still-transcribing': props.row.progress < 100
+                }"
               >
                 <q-td>
                   <q-checkbox
@@ -190,8 +197,56 @@
             row-key="id"
             :pagination="{ sortBy: 'updated', descending: true, rowsPerPage: 15 }"
           >
-            <template v-slot:body="props">
+            <!-- ⚠️ Vlastní hlavička pro checkbox -->
+            <template v-slot:header="props">
               <q-tr :props="props">
+                <q-th auto-width>
+                  <q-btn
+                  dense
+                  size="sm"
+                  label=""
+                  color="primary"
+                  icon="more_vert"
+                  :disable="selectedIds.length === 0"
+                >
+                  <q-menu>
+                    <q-list dense>
+                      <q-item clickable v-close-popup @click="moveSelectedToTrash">
+                        <q-item-section>🗑️ Move to trash</q-item-section>
+                      </q-item>
+                      <q-item clickable v-close-popup @click="markAsFinished">
+                        <q-item-section>✅ Mark as Finished</q-item-section>
+                      </q-item>
+                      <q-item clickable v-close-popup @click="markAsWorkingOn">
+                        <q-item-section>💼 Mark as Working On</q-item-section>
+                      </q-item>
+                      <q-item clickable v-close-popup @click="unMarked">
+                        <q-item-section>↩️ Unmark</q-item-section>
+                      </q-item>
+                    </q-list>
+                  </q-menu>
+                </q-btn>
+                </q-th> <!-- checkbox sloupec -->
+                <q-th v-for="col in props.cols" :key="col.name" :props="props">
+                  {{ col.label }}
+                </q-th>
+              </q-tr>
+            </template>
+            <template v-slot:body="props">
+              <q-tr 
+              :props="props"
+              :class="{ 
+                'finished-row': props.row.status_flag === 2 , 
+                'working-on-row': props.row.status_flag === 1,
+                'still-transcribing': props.row.progress < 100
+                }">
+                <q-td>
+                  <q-checkbox
+                    v-model="selectedIds"
+                    :val="props.row.id"
+                    size="sm"
+                  />
+                </q-td>
                 <q-td
                   v-for="col in columns"
                   :key="col.name"
@@ -216,12 +271,15 @@
             @click="showEmptyTrashDialog = true"
             @mouseenter="hoverTrash = true"
             @mouseleave="hoverTrash = false"
+            
             >
             <div class="text-h6 text-primary">
               <q-icon 
-              name="delete"
-              :class="{ 'trash-animate': hoverTrash }" />
-              <span :class="{ 'text-animate': hoverTrash }">Trash</span>
+                name="delete"
+                :class="{ 'trash-animate': hoverTrash }" />
+              <span 
+                :class="{ 'text-animate': hoverTrash }"
+                >Trash</span>
             </div>
           </div>
           <q-table
@@ -610,6 +668,7 @@ const deleteTranscription = async (id) => {
 onMounted(() => {
   if (selectedTab.value === 'myTranscriptions') {
     fetchTranscriptions();
+    
   } else if (selectedTab.value === 'sharedWithMe') {
     fetchSharedTranscriptions();
   } else if (selectedTab.value === 'folders') {
@@ -694,7 +753,11 @@ const shareWithUser = async () => {
 
     shareDialogVisible.value = false;
   } catch (error) {
-    console.error("Chyba při sdílení přepisu:", error);
+    console.error("Error sharing transcription:", error);
+    $q.notify({
+      type: 'negative',
+      message: 'Error sharing transcription. Only owner can share transcription.'
+    });
   }
 };
 //otevreni slozky a nacteni prepisu
@@ -727,7 +790,7 @@ const submitNewFolder = async () => {
     createFolderDialog.value = false
     fetchFolders() // refresh po vytvoření
   } catch (err) {
-    console.error("Chyba při vytváření složky:", err)
+    console.error("Error creating folder:", err)
   }
 }
 //otevre folder dialog pro prejmenovani uz vytvoreneho folderu
@@ -750,7 +813,7 @@ const renameFolder = async () => {
     fetchFolders() // znovunačti složky
     selectedFolder.value = newFolderName.value // aktualizuj aktuální složku
   } catch (err) {
-    console.error("Chyba při přejmenování složky:", err)
+    console.error("Error renaming folder:", err)
   }
 }
 //presun do kose
@@ -771,9 +834,14 @@ const moveSelectedToTrash = async () => {
       t => !selectedIds.value.includes(t.id)
     );
     selectedIds.value = [];
-
+    if(selectedTab.value === 'myTranscriptions')(fetchTranscriptions()) 
+    else if(selectedTab.value = 'folderContents' ) (openFolder(selectedFolder.value))
   } catch (error) {
-    console.error("Chyba při přesunu do koše:", error);
+    console.error("Error while moving file to trash:", error);
+    $q.notify({
+      type: 'negative',
+      message: 'Error while moving file to trash. Only owner can move file to trash'
+    });
   }
 };
 //obnov z kose
@@ -796,7 +864,8 @@ const restoreSelected = async () => {
     selectedDeletedIds.value = [];
 
   } catch (error) {
-    console.error("Chyba při přesunu do koše:", error);
+    console.error("Error while removinig file from trash:", error);
+    
   }
 };
 //oznaceni jako finished
@@ -815,7 +884,8 @@ const markAsFinished = async () => {
   });
 
     // refresh data
-    await fetchTranscriptions()
+    if(selectedTab.value === 'myTranscriptions')(fetchTranscriptions()) 
+    else if(selectedTab.value = 'folderContents' ) (openFolder(selectedFolder.value))
     selectedIds.value = [];
 
     $q.notify({
@@ -827,6 +897,38 @@ const markAsFinished = async () => {
     $q.notify({
       type: 'negative',
       message: 'Error marking as finished.'
+    });
+  }
+}
+//oznaceni jako finished
+const markAsWorkingOn = async () => {
+  if (selectedIds.value.length === 0) return;
+
+  try {
+    const token = localStorage.getItem("token")
+  await api.put("/transcriptions/action/bulk-set-flag", {
+    transcription_ids: selectedIds.value,  
+    new_status: 1                           
+  }, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+    // refresh data
+    if(selectedTab.value === 'myTranscriptions')(fetchTranscriptions()) 
+    else if(selectedTab.value = 'folderContents' ) (openFolder(selectedFolder.value))
+    selectedIds.value = [];
+
+    $q.notify({
+      type: 'positive',
+      message: 'Marked as Working On!'
+    });
+  } catch (err) {
+    console.error("❌ Error marking as Working On:", err);
+    $q.notify({
+      type: 'negative',
+      message: 'Error marking as Working On.'
     });
   }
 }
@@ -846,7 +948,8 @@ const unMarked = async () => {
   });
 
     // refresh data
-    await fetchTranscriptions()
+    if(selectedTab.value === 'myTranscriptions')(fetchTranscriptions()) 
+    else if(selectedTab.value = 'folderContents' ) (openFolder(selectedFolder.value))
     selectedIds.value = [];
 
     $q.notify({
@@ -972,8 +1075,23 @@ const stopPolling = () => {
 .finished-row {
   background-color: #e8f5e9 !important; /* světle zelené pozadí */
 }
+.working-on-row{
+  background-color: #f4f3a1 !important; /* světle zelené pozadí */
+}
+.still-transcribing {
+  color: #e53935; /* červený text */
+  font-weight: bold;
+}
 .trash-animate {
   animation: shake 1s ease-in-out;
+  cursor: pointer;
+  transition: color 0.3s ease;
+  color: #c10015 !important;
+}
+.text-animate{
+  transition: color 0.3s ease;
+  cursor: pointer;
+  color: #c10015 !important;
 }
 @keyframes shake {
   0% { transform: rotate(0); }

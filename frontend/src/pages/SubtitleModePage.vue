@@ -17,6 +17,7 @@
           </q-list>
         </q-menu>
       </q-btn>
+      <q-btn label="Save" color="primary" @click="saveTranscription" />
     </div>
     <!-- Horní část (text + video vedle sebe) -->
     <div class="row justify-between q-mb-md">
@@ -121,7 +122,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { DataSet, Timeline } from 'vis-timeline/standalone'
 import { api } from 'boot/axios'
 import 'vis-timeline/styles/vis-timeline-graph2d.min.css'
+import { useQuasar } from 'quasar'
 
+const $q = useQuasar()
 const route = useRoute()
 const router = useRouter();
 const videoPlayer = ref(null)
@@ -133,7 +136,7 @@ const transcription = ref({ media: null })
 const selectedSegmentIndex = ref(-1)
 const segmentRefs = ref({})
 let items = null
-
+let saveTimeout = null
 const renameDialogVisible = ref(false);
 const newTitle = ref("");
 
@@ -375,6 +378,59 @@ const redirectToTranscriptionMode = () =>{
   }
   // Přesměrování na stránku s úpravou titulků
   router.push(`/transcription/${route.params.id}`);
+};
+const regenerateTranscription = () => {
+  const fullText = segments.value.map(s => s.text).join(" ");
+  transcription.value.text = fullText;
+  transcription.value.segments = segments.value.map(segment => {
+    const originalWords = segment.words || [];
+    const newWords = segment.text.trim().split(/\s+/);
+
+    // Přiřazení časování pokud počet slov sedí
+    const wordsWithTiming = newWords.map((word, i) => {
+      const original = originalWords[i];
+      return {
+        word,
+        start: original?.start ?? segment.start,
+        end: original?.end ?? segment.end,
+        confidence: original?.confidence ?? 1.0
+      };
+    });
+
+    return {
+      ...segment,
+      words: wordsWithTiming
+    };
+  });
+};
+
+const autoSaveTranscription = () => {
+  regenerateTranscription();
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(async () => {
+    try {
+      await api.put(`/transcriptions/${route.params.id}`, transcription.value, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+      });
+      console.log("✅ Automaticky uloženo!");
+    } catch (error) {
+      console.error("Chyba při automatickém ukládání:", error);
+    }
+  }, 1000);
+};
+const saveTranscription = async () => {
+  regenerateTranscription();
+  try {
+
+    await api.put(`/transcriptions/${route.params.id}`, transcription.value, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    });
+
+    $q.notify({ type: 'positive', message: 'Changes saved successfully.' });
+  } catch (error) {
+    console.error("Chyba při ukládání:", error);
+    $q.notify({ type: 'negative', message: 'Failed to save changes.' });
+  }
 };
 </script>
 

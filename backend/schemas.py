@@ -1,7 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
-
 # Schéma uživatele
 class UserBase(BaseModel):
     username: str
@@ -66,6 +65,7 @@ class TranscriptionResponse(BaseModel):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
     username: str
 
@@ -90,3 +90,11 @@ class UserSettingsUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3)
     email: Optional[EmailStr] = None
     password: Optional[str] = Field(None, min_length=4)
+
+class WordUpdateRequest(BaseModel):
+    word_start: float
+    segment_id: int
+    new_word: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str

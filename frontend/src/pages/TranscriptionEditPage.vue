@@ -29,6 +29,7 @@
         </q-btn>
       </div>
     </div>
+
     <q-card class="main-card">
       <q-card-section class="header">
         <div class="title-container">
@@ -42,8 +43,9 @@
         <div 
         class="transcription-container" 
         ref="transcriptionContainer" 
-        contenteditable 
+        contenteditable="true"
         @keydown="handleKeyDown"
+        
         >
             <div 
                 v-for="segment in transcription.segments" 
@@ -51,14 +53,13 @@
                 class="segment-line"
             >
                 <span 
-                v-for="(word, index) in segment.words" 
+                v-for="(word) in segment.words" 
                 :key="word.start"
                 :ref="setWordRef"
                 :data-word-start="word.start"
                 :class="[getConfidenceClass(word.confidence), { 'highlighted': isHighlighted(word.start) }]"
                 contenteditable="true"
-                @click="selectWord(word)"
-                @blur="updateWordText($event, word, index, segment.words)" 
+                spellcheck="false"
                 >
                 {{ word.word }}
                 </span>
@@ -87,7 +88,7 @@
     </q-card>
 
     <!-- Audio přehrávač pevně připojený dole -->
-    <div v-if="transcription.media" class="audio-container">
+    <div v-if="transcription.media" class="audio-container row items-center q-gutter-sm">
       <audio 
         ref="audioPlayer"
         controls 
@@ -108,6 +109,19 @@
         class="speed-select"
         @update:model-value="changePlaybackRate"
       />
+      <div style="min-width: 200px; max-width: 250px;">
+        <q-slider
+          v-model="confidenceThreshold"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          label
+          color="red"
+          thumb-color="red"
+          track-color="grey-5"
+        />
+        <div class="text-caption text-grey text-center">Confidence threshold</div>
+  </div>
     </div>
     <!-- Pop-up okno pro přejmenování -->
     <q-dialog v-model="renameDialogVisible">
@@ -177,10 +191,15 @@
                 <q-item-section side>Play / Pause media</q-item-section>
                 </q-item>
                 <q-item>
-                <q-item-section>Ctrl + M</q-item-section>
-                <q-item-section side>Mark word as done (green)</q-item-section>
+                <q-item-section>Ctrl + "1"</q-item-section>
+                <q-item-section side>Mark word green</q-item-section>
+                </q-item>
+                <q-item>
+                <q-item-section>Ctrl + "2"</q-item-section>
+                <q-item-section side>Set confidence as 0.6(Red)</q-item-section>
                 </q-item>
             </q-list>
+            
             </q-card-section>
 
             <q-card-actions align="right">
@@ -221,6 +240,8 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from 'boot/axios';
 import { useQuasar } from 'quasar'
+import contenteditable from 'vue-contenteditable'
+
 
 const $q = useQuasar()
 const route = useRoute();
@@ -241,6 +262,13 @@ const wordElements = ref({})
 const MediaPlayerPlaying = ref(false); //flag pro media player 
 const showShortcutsDialog = ref(false); // dialog napovedy
 const showDownloadDialog = ref(false); // dialog pro stazeni
+const confidenceThreshold = ref(0.7) // pod jakou confidence hodnotu zobrazovat cervene
+let lockInterval = null// interval pro uzamknuti, pro shared transcriptions
+let tokenInterval = null //interval pro token
+const editedWords = ref({}); // sleduje zmeny
+const previousWordRef = ref(null);
+const currentSegmentID = ref(null);
+const previousSegmentID = ref(null);
 // ✅ Tabulka sloupců pro vybrané slovo
 const columns = [
   { name: "word", label: "Word", align: "left", field: row => row.word },
@@ -267,10 +295,25 @@ const fetchTranscription = async () => {
   }
 };
 
+const regenerateFromWords = () => {
+  const segments = transcription.value.segments
+
+  // ✅ Update `text`
+  const allWords = segments.flatMap(s => s.words)
+  transcription.value.text = allWords.map(w => w.word).join(' ')
+
+  // ✅ Update `segments` (pouze text v segmentech)
+  segments.forEach(segment => {
+    segment.text = segment.words.map(w => w.word).join(' ')
+  })
+
+  transcription.value.segments = [...segments]
+}
 
 
-// ✅ Automatické ukládání (debounce 1 sekunda)
+// ulozeni markeru
 const autoSaveTranscription = () => {
+  
   if (saveTimeout) clearTimeout(saveTimeout);
   saveTimeout = setTimeout(async () => {
     try {
@@ -287,16 +330,33 @@ const autoSaveTranscription = () => {
 
 // ✅ Funkce pro manuální uložení
 const saveTranscription = async () => {
+  regenerateTextAndSegmentsFromWords()
+
   try {
-    await api.put(`/transcriptions/${route.params.id}`, 
-      transcription.value,  
-      { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
-    );
-    router.push("/home");
+    await api.put(`/transcriptions/${route.params.id}`, transcription.value, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    });
+    console.log("✅ Změny uloženy!");
+    $q.notify({ type: 'positive', message: 'Transcription saved successfully!' })
   } catch (error) {
-    console.error("Chyba při ukládání transkripce:", error);
+    console.error("❌ Chyba při ukládání:", error);
+    $q.notify({ type: 'negative', message: 'Error saving transcription.' })
   }
 };
+const regenerateTextAndSegmentsFromWords = () => {
+  const segments = transcription.value.segments
+
+  //  Update text (sloučíme všechna slova z všech segmentů)
+  const allWords = segments.flatMap(s => s.words)
+  transcription.value.text = allWords.map(w => w.word).join(' ')
+
+  //  Update text v každém segmentu
+  segments.forEach(segment => {
+    segment.text = segment.words.map(w => w.word).join(' ')
+  })
+
+  transcription.value.segments = [...segments]  // znovu přepíšeme pro reaktivitu
+}
 
 // ✅ Funkce pro návrat zpět
 const cancelEdit = () => {
@@ -308,6 +368,7 @@ const redirectToSubtitleMode = () =>{
     return;
   }
   // Přesměrování na stránku s úpravou titulků
+  saveTranscription()
   router.push(`/subtitle-editor/${route.params.id}`);
 };
 
@@ -327,7 +388,7 @@ const isHighlighted = (wordStart) => {
 // ✅ Určuje barvu podle confidence
 const getConfidenceClass = (confidence) => {
   if (confidence > 1.0) return 'text-green';
-  if (confidence < 0.7) return "text-red";
+  if (confidence < confidenceThreshold.value) return "text-red";
   return "text-black";
 };
 
@@ -336,6 +397,7 @@ const selectWord = (word) => {
   selectedWord.value = word;
   if (audioPlayer.value) {
     audioPlayer.value.currentTime = word.start; // Posun přehrávače
+    
   }
   activeWordStart.value = word.start; //zvyraznit slovo
 };
@@ -380,12 +442,6 @@ const confirmCorrectness = () => {
     selectedWord.value.confidence = 1.0;
     autoSaveTranscription(); // ✅ Automaticky uloží potvrzení
   }
-};
-
-// ✅ Aktualizace textu slova (bez ztráty kurzoru)
-const updateWordText = (event, word, index, wordsArray) => {
-  word.word = event.target.innerText;
-  autoSaveTranscription(); // ✅ Automaticky uloží změnu po 1s
 };
 
 const getMediaPath = (path) => {
@@ -463,23 +519,40 @@ const handleSelectionChange = () => {
   if (!selection || selection.rangeCount === 0) return;
 
   const range = selection.getRangeAt(0);
-  const node = range.startContainer.parentElement;
+  const node = range.startContainer?.parentElement;
 
   if (node && node.dataset.wordStart) {
     const startTime = parseFloat(node.dataset.wordStart);
-    const word = findWordByStart(startTime);
+    const currentWord = findWordByStart(startTime);
 
-    if (word) {
-      activeWordStart.value = word.start;
-      selectedWord.value = word;
+    if (currentWord) {
+      // 🟢 Nejdřív ulož předchozí, pokud existuje
+      if (previousWordRef.value && previousWordRef.value !== currentWord) {
+        const oldNode = wordElements.value[previousWordRef.value.start];
+        const newText = oldNode?.innerText;
 
-      // ⏪ Nastav čas v přehrávači
+        if (newText && previousWordRef.value.word.trim() !== newText.trim()) {
+          autoSaveOneWord(previousWordRef.value.start, previousSegmentID.value, newText)
+          console.log(`💾 Ukládám::"${previousSegmentID.value}"---"${previousWordRef.value.word}" → "${newText}"`);
+          
+          previousWordRef.value.word = newText;
+          editedWords.value[previousWordRef.value.start] = newText;
+        }
+      }
+
+      // 🔁 Aktualizuj previousWord
+      previousWordRef.value = currentWord;
+
+      // ⏩ Vyber aktuální slovo
+      activeWordStart.value = currentWord.start;
+      selectedWord.value = currentWord;
+
       if (audioPlayer.value) {
-        audioPlayer.value.currentTime = word.start;
+        audioPlayer.value.currentTime = currentWord.start;
       }
 
       // 🔄 Scroll doprostřed
-      const el = wordElements.value[word.start];
+      const el = wordElements.value[currentWord.start];
       if (el && transcriptionContainer.value) {
         const container = transcriptionContainer.value;
         const offsetTop = el.offsetTop - container.offsetTop;
@@ -492,13 +565,47 @@ const handleSelectionChange = () => {
     }
   }
 };
-const getAllWords = () => {
-  return transcription.value.segments.flatMap(s => s.words);
-};
+//automaticke ulozeni zmeneneho slova
+const autoSaveOneWord = async (word_start, segmentId, new_word) => {
+  // 🔒 Typová kontrola
+  if (
+    typeof word_start !== 'number' ||
+    typeof segmentId !== 'number' ||
+    typeof new_word !== 'string' ||
+    new_word.trim() === ''
+  ) {
+    console.warn("⚠️ Neplatné vstupní hodnoty pro autoSaveOneWord:", {
+      word_start,
+      segmentId,
+      new_word
+    })
+    return
+  }
+
+  try {
+    await api.put(`/transcriptions/${route.params.id}/update-word`, {
+      word_start,
+      segment_id: segmentId,
+      new_word: new_word.trim()
+    }, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('token')}`
+      }
+    })
+    console.log(`💾 Slovo "${new_word}" (start: ${word_start}, segment: ${segmentId}) úspěšně uloženo.`)
+  } catch (err) {
+    console.error("❌ Chyba při ukládání jednoho slova:", err)
+  }
+}
+
 const findWordByStart = (start) => {
   for (const segment of transcription.value.segments) {
     const found = segment.words.find(w => w.start === start)
-    if (found) return found
+    if (found) {
+      previousSegmentID.value = currentSegmentID.value
+      currentSegmentID.value = segment.segment_id
+      return found
+    }
   }
   return null
 }
@@ -522,10 +629,18 @@ const handleKeyboardNavigation = (event) => {
     confirmCorrectness();
     return;
   }
-  // Ctrl + M → Mark word as "done"
-    if (event.ctrlKey && event.key.toLowerCase() === 'm') {
+  // Ctrl + 1 → Mark word as "done"
+  if (event.ctrlKey && event.key.toLowerCase() === '1') {
     if (selectedWord.value) {
         selectedWord.value.confidence = 1.1;
+        autoSaveTranscription();
+    }
+    return;
+    }
+  // Ctrl + 2 → Mark word as "confidence=0.6"
+  if (event.ctrlKey && event.key.toLowerCase() === '2') {
+    if (selectedWord.value) {
+        selectedWord.value.confidence = 0.6;
         autoSaveTranscription();
     }
     return;
@@ -611,16 +726,12 @@ const onMediaPlay = () => {
   MediaPlayerPlaying.value = true
   
 
-  // ✅ Odstranit focus z aktivního elementu
+  //  Odstranit focus z aktivního elementu
   if (document.activeElement && document.activeElement.blur) {
     document.activeElement.blur()
   }
 
-  // ✅ Odstranit případné výběry (caret)
-  const sel = window.getSelection()
-  if (sel) {
-    sel.removeAllRanges()
-  }
+  
 }
 
 //presun kurzoru po stopnuti mediaplayeru na zvyraznene slovo
@@ -659,7 +770,60 @@ const handleKeyDown = (event) => {
     transcription.value = { ...transcription.value }
     autoSaveTranscription()
   }
+  else if (event.ctrlKey && event.key === '1') {
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed) return
+
+    const range = selection.getRangeAt(0)
+    const selectedNodes = getSpansInRange(range)
+
+    selectedNodes.forEach((el) => {
+      const start = parseFloat(el.dataset.wordStart) 
+      for (const segment of transcription.value.segments) {
+        const word = segment.words.find(w => w.start === start)
+        if (word) {
+          word.confidence = 1.1
+        }
+      }
+    })
+
+    // aktualizuj reaktivitu
+    transcription.value = { ...transcription.value }
+    autoSaveTranscription()
+  }
+  else if (event.ctrlKey && event.key === '2') {
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed) return
+
+    const range = selection.getRangeAt(0)
+    const selectedNodes = getSpansInRange(range)
+
+    selectedNodes.forEach((el) => {
+      const start = parseFloat(el.dataset.wordStart) 
+      for (const segment of transcription.value.segments) {
+        const word = segment.words.find(w => w.start === start)
+        if (word) {
+          word.confidence = 0.6
+        }
+      }
+    })
+
+    // aktualizuj reaktivitu
+    transcription.value = { ...transcription.value }
+    autoSaveTranscription()
+  }
 }
+//zamykani prepisu
+const keepTranscriptionLocked = async () => {
+  try {
+    await api.put(`/transcriptions/${route.params.id}/lock`, null, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    });
+    console.log("🔐 Zámek obnoven");
+  } catch (err) {
+    console.error("❌ Chyba při prodlužování zámku:", err);
+  }
+};
 const getSpansInRange = (range) => {
   const selected = []
   const walker = document.createTreeWalker(
@@ -726,19 +890,43 @@ const handleDownloadWithTimestamps = () => {
   downloadWithTimestamps()
   showDownloadDialog.value = false
 }
-onMounted(async () => {
-  const id = route.params.id;
+
+const RefreshToken = async () => {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) {
+    console.warn("⚠️ Chybí refresh token!");
+    return;
+  }
 
   try {
+    const response = await api.post('/auth/refresh', {
+      refresh_token: refreshToken
+    });
+    localStorage.setItem('refresh_token', response.data.access_token);
+    console.log("🔄 Token refreshed!");
+  } catch (err) {
+    console.error("❌ Failed to refresh token", err.response?.data || err);
+  }
+};
+  ////////////////////////////////////////////
+ //                onMounted               //
+////////////////////////////////////////////
+onMounted(async () => {
+  const id = route.params.id;
+  
+  try {
+    //prvni uzamknuti
     await api.put(`/transcriptions/${id}/lock`, null, {
       headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
     });
 
-    // ✅ Pokud zámek úspěšný, načti transkripci
+    //  Pokud zámek úspěšný, načti transkripci
     await fetchTranscription();
-
+    //uzamknuti kazdych 10s
+    lockInterval = setInterval(keepTranscriptionLocked, 10000);
     document.addEventListener('selectionchange', handleSelectionChange);
     window.addEventListener('keydown', handleKeyboardNavigation);
+    tokenInterval = setInterval(RefreshToken,600000);
 
   } catch (err) {
     if (err.response?.status === 403) {
@@ -754,14 +942,13 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(async () => {
-  // 🧹 Odebrání listenerů
+  //  Odebrání listenerů
   document.removeEventListener('selectionchange', handleSelectionChange);
   window.removeEventListener('keydown', handleKeyboardNavigation);
-
-  // 🔓 Odemknutí přepisu
-  const id = route.params.id;
-  
+  clearInterval(lockInterval);
 });
+
+
 </script>
 
 <style scoped>

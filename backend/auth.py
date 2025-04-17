@@ -46,3 +46,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 
+def create_refresh_token(username: str, expires_delta: timedelta = timedelta(days=7)):
+    payload = {
+        "sub": username,
+        "exp": datetime.utcnow() + expires_delta
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_token(token: str):
+    print(jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM]))
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
