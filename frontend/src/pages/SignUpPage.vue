@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from 'boot/axios'
 import backgroundImage from 'src/assets/background.png'  // Dynamický import
+import SignInPage from './SignInPage.vue'
+
 
 const router = useRouter()
 const username = ref('')
@@ -18,10 +20,17 @@ const register = async () => {
       password: password.value 
     })
     
-    localStorage.setItem('user', username.value)
+    try {
+    const response = await api.post('/auth/login', { username: username.value, password: password.value })
+    localStorage.setItem('user', response.data.username)
+    localStorage.setItem('token', response.data.access_token)
+    localStorage.setItem("refresh_token", response.data.refresh_token);
     window.dispatchEvent(new Event('auth-changed'))
-
     router.push('/home')
+  } catch (error) {
+    errorMessage.value = 'Login failed!'
+  }
+    
   } catch (error) {
     errorMessage.value = 'Registration failed!'
   }

@@ -377,6 +377,7 @@ const redirectToTranscriptionMode = () =>{
     return;
   }
   // Přesměrování na stránku s úpravou titulků
+  saveTranscription();
   router.push(`/transcription/${route.params.id}`);
 };
 const regenerateTranscription = () => {
@@ -421,7 +422,6 @@ const autoSaveTranscription = () => {
 const saveTranscription = async () => {
   regenerateTranscription();
   try {
-
     await api.put(`/transcriptions/${route.params.id}`, transcription.value, {
       headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
     });
