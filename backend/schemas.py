@@ -98,3 +98,7 @@ class WordUpdateRequest(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
+class MoveToFolderRequest(BaseModel):
+    transcription_ids: list[int]
+    new_folder: str

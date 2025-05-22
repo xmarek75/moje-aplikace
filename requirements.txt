@@ -1,0 +1,25 @@
+bcrypt==3.2.0
+ctranslate2==4.5.0
+fastapi==0.115.4
+faster-whisper==1.1.1
+
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.1.0.70
+
+email_validator==2.2.0
+
+oauthlib==3.2.0
+passlib==1.7.4
+pydantic==2.9.2
+PyJWT==2.3.0
+python-multipart==0.0.18
+python-jose==3.4.0
+SQLAlchemy==2.0.38
+tiktoken==0.8.0
+tqdm==4.66.6
+tokenizers==0.20.3
+torch==2.5.1
+uvicorn==0.32.0
+whisper==1.1.10
+
+openai-whisper @ git+https://github.com/openai/whisper.git@271445b2f24f00f8175c4fb7ae91876f7451dfc1

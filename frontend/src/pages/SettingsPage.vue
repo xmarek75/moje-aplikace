@@ -27,7 +27,44 @@
         <q-btn color="primary" label="Change Password" @click="passwordDialog = true" />
       </q-card-section>
     </q-card>
+    <!-- Mezera -->
+    <div class="q-mt-xl"></div>
 
+    <q-card class="q-pa-lg q-mt-xl" style="max-width: 600px; margin: auto;">
+      <q-card-section>
+        <div class="text-h5">🤝 Shared with Others</div>
+      </q-card-section>
+      <q-separator class="q-my-sm" />
+      <q-card-section v-if="sharedByMe.length > 0">
+        <q-list bordered>
+          <q-item v-for="row in sharedByMe" :key="`${row.id}-${row.shared_with.id}`" class="q-py-sm">
+            <q-item-section>
+              <div class="text-subtitle1">{{ row.title }}</div>
+              <div class="text-caption text-grey">
+                Shared with: {{ row.shared_with.username }} ({{ row.shared_with.email }})
+              </div>
+            </q-item-section>
+            <q-item-section side top>
+              <q-btn
+                flat
+                dense
+                icon="cancel"
+                color="negative"
+                size="sm"
+                @click="revokeShare(row.id, row.shared_with.id)"
+              >
+                <q-tooltip>Revoke sharing</q-tooltip>
+              </q-btn>
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </q-card-section>
+      <q-card-section v-else>
+        <div class="text-subtitle2 text-grey">
+          No transcriptions currently shared.
+        </div>
+      </q-card-section>
+    </q-card>
     <!-- 🔹 Dialog pro změnu username -->
     <q-dialog v-model="usernameDialog">
       <q-card class="q-pa-md" style="min-width: 300px">
@@ -115,6 +152,12 @@ const oldPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 
+const sharedByMe = ref([])
+const sharedByMeColumns = [
+  { name: 'title', label: 'Transcription', field: 'title', align: 'left' },
+  { name: 'shared_with', label: 'Shared With', field: row => `${row.shared_with.username} (${row.shared_with.email})`, align: 'left' },
+  { name: 'actions', label: '', align: 'center' }
+]
 // ✅ Načtení aktuálního uživatele
 const fetchCurrentUser = async () => {
   try {
@@ -199,7 +242,37 @@ const logout = () => {
   router.push('/signin')
 }
 
+const fetchSharedByMe = async () => {
+  try {
+    const token = localStorage.getItem("token")
+    const res = await api.get("/transcriptions/action/shared-by-me", {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    sharedByMe.value = res.data
+  } catch (err) {
+    console.error("Failed to load shared transcriptions", err)
+  }
+}
+
+const revokeShare = async (transcriptionId, userId) => {
+  try {
+    await api.delete(`/transcriptions/action/revoke-share/${transcriptionId}/${userId}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    })
+    sharedByMe.value = sharedByMe.value.filter(
+      s => !(s.id === transcriptionId && s.shared_with.id === userId)
+    )
+    $q.notify({ type: 'positive', message: 'Sharing revoked.' })
+  } catch (err) {
+    console.error("Failed to revoke share", err)
+    $q.notify({ type: 'negative', message: 'Failed to revoke sharing.' })
+  }
+}
+
+
 onMounted(() => {
   fetchCurrentUser()
+  fetchSharedByMe()
 })
 </script>
+

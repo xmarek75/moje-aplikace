@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Query, Body
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Query, Body, Path
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, func, case, or_, and_
 from database import engine, Base, get_db
-from models import User, Media, Transcription
-from schemas import RefreshTokenRequest, WordUpdateRequest, UserSettingsUpdate, BulkMoveToTrashRequest,BulkSetFlagRequest, FolderRenameRequest,UserCreate,FolderCreateRequest, ShareRequest, UserResponse, Token, MediaCreate,ModelChangeRequest, MediaRenameRequest, MediaResponse, TranscriptionCreate, TranscriptionResponse, UserLogin
+from models import User, Media, Transcription, shared_transcriptions
+from schemas import MoveToFolderRequest, RefreshTokenRequest, WordUpdateRequest, UserSettingsUpdate, BulkMoveToTrashRequest,BulkSetFlagRequest, FolderRenameRequest,UserCreate,FolderCreateRequest, ShareRequest, UserResponse, Token, MediaCreate,ModelChangeRequest, MediaRenameRequest, MediaResponse, TranscriptionCreate, TranscriptionResponse, UserLogin
 from auth import  hash_password, verify_password, create_access_token, get_current_user, decode_token, create_refresh_token
 from datetime import timedelta, datetime
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +15,7 @@ from uuid import uuid4
 from worker import transcription_worker
 from threading import Thread
 import json 
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from auth import pwd_context
 app = FastAPI()
 
@@ -607,6 +607,35 @@ def rename_folder(
 
     return {"message": f"Folder renamed from '{request.old_name}' to '{request.new_name}'"}
 
+# endpoint pro přesunutí přepisů do jiné složky
+@app.put("/folders/move-to-folder")
+def move_transcriptions_to_folder(
+    request: MoveToFolderRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media, Transcription.media_id == Media.id)
+        .filter(
+            Transcription.id.in_(request.transcription_ids),
+            Media.owner_id == current_user.id
+        )
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="No matching transcriptions found")
+
+    for transcription in transcriptions:
+        transcription.folder = request.new_folder
+
+    db.commit()
+
+    return {"message": f"{len(transcriptions)} transcription(s) moved to folder '{request.new_folder}'"}
+
+
+
 #endpoint pro hromadne nastaveni flagu
 @app.put("/transcriptions/action/bulk-set-flag")
 def bulk_set_flag(
@@ -977,3 +1006,137 @@ def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_db)):
         "token_type": "bearer",
         "username": user.username            # ✅ opraveno z "bearer"
     }
+
+@app.delete("/folders/{folder_name}")
+def delete_folder(
+    folder_name: str = Path(..., description="Name of the folder to delete"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Načti přepisy v dané složce vytvořené tímto uživatelem
+    transcriptions = (
+        db.query(Transcription)
+        .outerjoin(Media)
+        .filter(
+            Transcription.folder == folder_name,
+            (Media.owner_id == current_user.id) | (Transcription.media_id == None)
+        )
+        .all()
+    )
+
+    if not transcriptions:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Zkontroluj, že složka je prázdná (neobsahuje reálné přepisy)
+    has_nonempty = any(t.media_id is not None for t in transcriptions)
+    if has_nonempty:
+        raise HTTPException(status_code=400, detail="Folder is not empty")
+
+    # Smaž prázdnou složku (přepisy typu "složka" bez media)
+    for t in transcriptions:
+        db.delete(t)
+
+    db.commit()
+
+    return {"message": f"Folder '{folder_name}' was deleted"}
+
+#endpoint pro zjisteni ktere prepisy uzivatel nasdilel
+@app.get("/transcriptions/action/shared-by-me")
+def get_shared_by_me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcriptions = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Media.owner_id == current_user.id)
+        .filter(Transcription.shared_with.any())  # pouze pokud sdíleno
+        .all()
+    )
+
+    result = []
+    for t in transcriptions:
+        for u in t.shared_with:
+            result.append({
+                "id": t.id,
+                "title": t.media.title if t.media else "[No Title]",
+                "shared_with": {
+                    "id": u.id,
+                    "username": u.username,
+                    "email": u.email
+                }
+            })
+
+    return result
+#endpoint pro zruseni sdileni 
+@app.delete("/transcriptions/action/revoke-share/{transcription_id}/{user_id}")
+def revoke_share(
+    transcription_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcription = (
+        db.query(Transcription)
+        .join(Media)
+        .filter(Transcription.id == transcription_id, Media.owner_id == current_user.id)
+        .first()
+    )
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Not found or not allowed")
+
+    stmt = shared_transcriptions.delete().where(
+        shared_transcriptions.c.transcription_id == transcription_id,
+        shared_transcriptions.c.user_id == user_id
+    )
+    db.execute(stmt)
+    db.commit()
+    return {"message": "Sharing revoked"}
+#endpoint pro vygenerovani srt souboru
+def format_srt_time(seconds: float) -> str:
+    from datetime import timedelta
+    td = timedelta(seconds=seconds)
+    total_seconds = int(td.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    milliseconds = int((td.total_seconds() - total_seconds) * 1000)
+    return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
+
+@app.get("/transcriptions/{transcription_id}/export-srt")
+def download_srt(
+    transcription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    transcription = db.query(Transcription).filter(Transcription.id == transcription_id).first()
+
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transkripce nenalezena")
+
+    # Kontrola oprávnění
+    is_owner = transcription.media and transcription.media.owner_id == current_user.id
+    is_shared = current_user in transcription.shared_with
+    if not is_owner and not is_shared:
+        raise HTTPException(status_code=403, detail="Nemáte oprávnění stáhnout tento přepis")
+
+    try:
+        data = json.loads(transcription.text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Chybný formát přepisu")
+
+    segments = data.get("segments", [])
+    srt_lines = []
+    for i, segment in enumerate(segments):
+        start = format_srt_time(segment["start"])
+        end = format_srt_time(segment["end"])
+        text = segment.get("text", "").strip()
+        srt_lines.append(f"{i + 1}\n{start} --> {end}\n{text}\n")
+
+    content = "\n".join(srt_lines)
+
+    return Response(
+        content=content,
+        media_type="text/srt",
+        headers={"Content-Disposition": f"attachment; filename=transcription_{transcription_id}.srt"}
+    )

@@ -1,7 +1,6 @@
 import time
-import whisper
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor 
 from database import SessionLocal
 from models import Transcription, Media
 import json
@@ -13,13 +12,16 @@ from tqdm import tqdm
 MAX_WORKERS = os.cpu_count() or 4  # Pokud os.cpu_count() vrátí None, použije 4
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+
 device = "cpu"
 compute_type = "int8"
 #nacteni modelu
 print("Loading models...")
+
 modelBase = WhisperModel("base", device=device, compute_type=compute_type)
-#modelMedium = WhisperModel("medium", device=device, compute_type=compute_type)
+modelMedium = WhisperModel("medium", device=device, compute_type=compute_type)
 #modelLarge = WhisperModel("large", device=device, compute_type=compute_type)
+
 #whisper_model = FasterWhisper(model_size="base", device="cpu", compute_type="int8")
 # ✅ Funkce pro výběr správného modelu podle hodnoty z frontend
 def get_model(modelType):
@@ -73,7 +75,7 @@ def transcribe_audio(media_id: int, modelType: str):
 
         # ✅ Spustíme přepis s progressem
         segments_iterator, info = model.transcribe(
-            file_path, beam_size=5, word_timestamps=True, log_progress=True
+            file_path, beam_size=5, word_timestamps=True
         )
 
         total_duration = info.duration  # Celková délka nahrávky (sekundy)

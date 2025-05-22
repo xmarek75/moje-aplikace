@@ -2,8 +2,8 @@
   <q-page class="index-page flex flex-center">
     <div class="content-container">
       <div class="hero-section">
-        <h1 class="app-title">LexApp</h1>
-        <p class="app-tagline">Revolutionizing Speech-to-Text Technology</p>
+        <h1 class="app-title">EleScribe</h1>
+        <p class="app-tagline">Faster-Whisper Speech-to-Text Technology</p>
       </div>
       <div class="features">
         <q-card class="feature-card">
@@ -16,7 +16,7 @@
         </q-card>
         <q-card class="feature-card">
           <q-icon name="share" color="primary" size="3rem" />
-          <p>Easy Sharing & Collaboration</p>
+          <p>Easy collaboration</p>
         </q-card>
         <q-card class="feature-card">
           <q-icon name="subtitles" color="primary" size="3rem" />

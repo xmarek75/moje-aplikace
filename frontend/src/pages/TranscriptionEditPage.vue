@@ -208,30 +208,30 @@
         </q-card>
     </q-dialog>
     <q-dialog v-model="showDownloadDialog">
-  <q-card>
-    <q-card-section>
-      <div class="text-h6">Download Options</div>
-    </q-card-section>
-    <q-card-section>
-      <q-btn 
-        label="Download without timestamps" 
-        color="primary" 
-        class="q-mb-sm full-width"
-        @click="handleDownloadPlain"
-      />
-      <q-btn 
-        label="Download with timestamps" 
-        color="secondary" 
-        class="full-width"
-        @click="handleDownloadWithTimestamps"
-      />
-    </q-card-section>
-    <q-card-actions align="right">
-      <q-btn flat label="Cancel" color="negative" v-close-popup />
-    </q-card-actions>
-  </q-card>
-</q-dialog>
-  </q-page>
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Download Options</div>
+        </q-card-section>
+        <q-card-section>
+          <q-btn 
+            label="Download plain text TXT" 
+            color="primary" 
+            class="q-mb-sm full-width"
+            @click="downloadPlainText"
+          />
+          <q-btn 
+            label="Download subtitles SRT" 
+            color="secondary" 
+            class="full-width"
+            @click="downloadSRT"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="negative" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+      </q-page>
 </template>
 
 
@@ -241,7 +241,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from 'boot/axios';
 import { useQuasar } from 'quasar'
 import contenteditable from 'vue-contenteditable'
-
+import { useDownload } from 'src/components/useDownload'
 
 const $q = useQuasar()
 const route = useRoute();
@@ -269,6 +269,8 @@ const editedWords = ref({}); // sleduje zmeny
 const previousWordRef = ref(null);
 const currentSegmentID = ref(null);
 const previousSegmentID = ref(null);
+
+const { downloadPlainText, downloadSRT } = useDownload(transcription)
 // ✅ Tabulka sloupců pro vybrané slovo
 const columns = [
   { name: "word", label: "Word", align: "left", field: row => row.word },
@@ -850,64 +852,8 @@ const getSpansInRange = (range) => {
   }
 
   return selected
-}
-const downloadPlainText = () => {
-  const text = transcription.value.segments
-    .map(seg => seg.words.map(w => w.word).join(" "))
-    .join("\n\n");
-
-  triggerDownload(text, 'plain');
-}
-
-const downloadWithTimestamps = () => {
-  const text = transcription.value.segments
-    .map(seg => {
-      const time = `${formatTime(seg.start)} - ${formatTime(seg.end)}`
-      const content = seg.words.map(w => w.word).join(" ")
-      return `[${time}] ${content}`
-    })
-    .join("\n\n");
-
-  triggerDownload(text, 'timestamps');
-}
-
-const triggerDownload = (text, type) => {
-  const blob = new Blob([text], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const title = transcription.value.media?.title || "transcription";
-  a.download = `${title}${type === 'timestamps' ? '_with_timestamps' : ''}.txt`;
-  a.href = url;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-const handleDownloadPlain = () => {
-  downloadPlainText()
-  showDownloadDialog.value = false
-}
-const handleDownloadWithTimestamps = () => {
-  downloadWithTimestamps()
-  showDownloadDialog.value = false
-}
-
-const RefreshToken = async () => {
-  const refreshToken = localStorage.getItem('refresh_token')
-  if (!refreshToken) {
-    console.warn("⚠️ Chybí refresh token!");
-    return;
-  }
-
-  try {
-    const response = await api.post('/auth/refresh', {
-      refresh_token: refreshToken
-    });
-    localStorage.setItem('refresh_token', response.data.access_token);
-    console.log("🔄 Token refreshed!");
-  } catch (err) {
-    console.error("❌ Failed to refresh token", err.response?.data || err);
-  }
 };
+
   ////////////////////////////////////////////
  //                onMounted               //
 ////////////////////////////////////////////
@@ -1120,8 +1066,8 @@ onBeforeUnmount(async () => {
   justify-content: flex-start;
   padding: 10px 10px;
 }
-.transcription-container span {
-  font-size: 1.05rem; /* nebo třeba 1.4rem pro větší efekt */
+.transcription-container {
+  font-size: 1.08rem; 
   line-height: 1.8;
   padding: 2px;
 }

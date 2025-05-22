@@ -1,24 +1,30 @@
 <template>
   <q-page class="q-pa-md column">
 <!-- 🔹 Horní lišta s názvem -->
-    <div class="transcription-button-container">
-      <q-btn label="Transcription" color="primary" icon="article" @click="openTranscriptionMenu" class=TranscriptionButton>
-        <q-menu>
-          <q-list>
-            <q-item clickable v-close-popup @click="openModelDialog">
-              <q-item-section>Choose Different Model</q-item-section>
-            </q-item>
-            <q-item clickable v-close-popup @click="redirectToTranscriptionMode">
-              <q-item-section>Transcription Mode</q-item-section>
-            </q-item>
-            <q-item clickable v-close-popup @click="downloadTranscription">
-              <q-item-section>Download</q-item-section>
-            </q-item>
-          </q-list>
-        </q-menu>
-      </q-btn>
-      <q-btn label="Save" color="primary" @click="saveTranscription" />
-    </div>
+    <div class="row items-center q-gutter-sm q-mb-md transcription-header">
+  <q-btn label="Transcription" color="primary" icon="article" @click="openTranscriptionMenu" class="TranscriptionButton">
+    <q-menu>
+      <q-list>
+        <q-item clickable v-close-popup @click="openModelDialog">
+          <q-item-section>Choose Different Model</q-item-section>
+        </q-item>
+        <q-item clickable v-close-popup @click="redirectToTranscriptionMode">
+          <q-item-section>Transcription Mode</q-item-section>
+        </q-item>
+        <q-item clickable v-close-popup @click="showDownloadDialog = true">
+          <q-item-section>Download</q-item-section>
+        </q-item>
+      </q-list>
+    </q-menu>
+  </q-btn>
+
+  <q-btn label="Save" color="primary" @click="saveTranscription" />
+
+  <div class="row items-center q-ml-sm">
+    <div class="text-subtitle1 q-mr-xs">{{ transcription.media?.title }}</div>
+    <q-btn dense flat round icon="edit" size="sm" @click="openRenameDialog" />
+  </div>
+</div>
     <!-- Horní část (text + video vedle sebe) -->
     <div class="row justify-between q-mb-md">
       <!-- 🔹 Levá část: Text -->
@@ -33,9 +39,9 @@
           :ref="el => setSegmentRef(el, index)"
         >
           <q-input
-            v-model.number="segment.start"
+            v-model="segment.startDisplay"
             dense
-            type="number"
+            type="text"
             class="timestamp-field"
             
             @blur="onTimeChange(index)"
@@ -43,9 +49,9 @@
           <span class="mx-1">–</span>
 
           <q-input
-            v-model.number="segment.end"
+            v-model="segment.endDisplay"
             dense
-            type="number"
+            type="text"
             class="timestamp-field"
             @blur="onTimeChange(index)"
           />
@@ -61,7 +67,7 @@
       </div>
 
       <!-- 🔸 Pravá část: Video -->
-      <div class="media-box">
+      <div class="media-box" style="position: relative;">
         <video
           ref="videoPlayer"
           controls
@@ -69,9 +75,23 @@
           :src="getMediaPath(transcription.media?.file_path)"
           @timeupdate="onVideoTimeUpdate"
         ></video>
+        <div
+          v-if="shouldShowSubtitle"
+          class="subtitle-overlay"
+        >
+          {{ segments[selectedSegmentIndex]?.text }}
+        </div>
       </div>
     </div>
-
+    <div class="q-my-md">
+  <q-btn label="Split segment" color="secondary" :disable="selectedSegmentIndex < 0" @click="openSplitDialog" />
+<q-btn
+  label="Delete segment"
+  color="negative"
+  :disable="selectedSegmentIndex < 0"
+  @click="deleteSelectedSegment"
+/>
+</div>
     <!-- 🔻 Spodní část: Timeline -->
     <div class="timeline-container" ref="timelineContainer" />
     <q-dialog v-model="renameDialogVisible">
@@ -108,6 +128,66 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+     <!-- rename dialog -->
+    <q-dialog v-model="renameDialogVisible">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Rename Transcription</div>
+          <q-input v-model="newTitle" label="New Title" autofocus />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn label="Save" color="primary" @click="renameMedia" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+    <!--  dialog pro split -->
+    <q-dialog v-model="splitDialogVisible">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Split Segment</div>
+          <p>Click the word where the segment should be split</p>
+          <div class="q-mt-sm q-mb-sm">
+            <span
+              v-for="(word, i) in splitWords"
+              :key="i"
+              @click="selectSplitIndex(i)"
+              :class="['split-word', { selected: splitIndex === i }]"
+            >
+              {{ word.word }}
+            </span>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn label="Split" color="primary" @click="performSplit" :disable="splitIndex === null" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+    <q-dialog v-model="showDownloadDialog">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Download Options</div>
+        </q-card-section>
+        <q-card-section>
+          <q-btn 
+            label="Download plain text TXT" 
+            color="primary" 
+            class="q-mb-sm full-width"
+            @click="downloadPlainText"
+          />
+          <q-btn 
+            label="Download subtitles SRT" 
+            color="secondary" 
+            class="full-width"
+            @click="downloadSRT"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="negative" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
   
 </template>
@@ -117,12 +197,15 @@
 
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { DataSet, Timeline } from 'vis-timeline/standalone'
 import { api } from 'boot/axios'
 import 'vis-timeline/styles/vis-timeline-graph2d.min.css'
 import { useQuasar } from 'quasar'
+
+import { useDownload } from 'src/components/useDownload'
+
 
 const $q = useQuasar()
 const route = useRoute()
@@ -142,7 +225,12 @@ const newTitle = ref("");
 
 const modelDialogVisible = ref(false);
 const selectedModel = ref(""); 
-
+const { downloadPlainText, downloadSRT } = useDownload(transcription)
+const showDownloadDialog = ref(false);
+//split
+const splitDialogVisible = ref(false)
+const splitWords = ref([])
+const splitIndex = ref(null)
 //tabulka modelu
 const models = [
   { label: 'Base', value: 'model_a' },
@@ -158,12 +246,15 @@ const getMediaPath = (path) => {
 const formatTime = (seconds) => {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
+  const cs = Math.floor((seconds % 1) * 100)
+  return `${m}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`
 }
 
 const parseTime = (timeString) => {
-  const [min, sec] = timeString.split(':').map(Number)
-  return (min || 0) * 60 + (sec || 0)
+  const [minSec, msPart] = timeString.split('.')
+  const [min, sec] = minSec.split(':').map(Number)
+  const cs = Number(csPart || 0)
+  return (min || 0) * 60 + (sec || 0) + cs / 100
 }
 
 
@@ -194,7 +285,7 @@ const initTimeline = () => {
   )
 
   timeline.value = new Timeline(timelineContainer.value, items, {
-    editable: { updateTime: true, overrideItems: true },
+    editable: { updateTime: true, overrideItems: true, },
     stack: false,
     margin: { item: 10 },
     zoomable: true,
@@ -203,6 +294,9 @@ const initTimeline = () => {
     timeAxis: { scale: 'second', step: 5 },
     showMinorLabels: true,
     showMajorLabels: false,
+    min: new Date(0),  // začátek od 0 sekund
+    max: new Date(mediaDuration * 1000),
+    
   })
 
   items.on('update', (changedItems) => {
@@ -211,6 +305,8 @@ const initTimeline = () => {
       ...segments.value[item.id],
       start: item.start.getTime() / 1000,
       end: item.end.getTime() / 1000,
+      startDisplay: formatTime(item.start.getTime() / 1000),// doplneno pozdeji
+      endDisplay: formatTime(item.end.getTime() / 1000),//doplneno pozdeji
     }))
   })
   timeline.value.on('select', (props) => {
@@ -256,6 +352,9 @@ const updateTimelineFromSegments = () => {
 }
 
 const onTimeChange = (index) => {
+  const segment = segments.value[index]
+  segment.start = parseTime(segment.startDisplay)
+  segment.end = parseTime(segment.endDisplay)
   updateTimelineFromSegments()
   
   
@@ -301,17 +400,19 @@ const onVideoTimeUpdate = () => {
     current >= seg.start && current <= seg.end
   )
 
-  if (currentSegmentIndex !== -1 && currentSegmentIndex !== selectedSegmentIndex.value) {
-    selectedSegmentIndex.value = currentSegmentIndex
+  if (currentSegmentIndex !== selectedSegmentIndex.value) {
+  selectedSegmentIndex.value = currentSegmentIndex
+  if (currentSegmentIndex !== -1) {
     scrollToSegment(currentSegmentIndex)
     timeline.value.setSelection([currentSegmentIndex])
     timeline.value.moveTo(new Date(segments.value[currentSegmentIndex].start * 1000), {
-        animation: {
-          duration: 300,
-          easingFunction: 'easeInOutQuad'
-        }
-      });
+      animation: {
+        duration: 300,
+        easingFunction: 'easeInOutQuad'
+      }
+    })
   }
+}
 }
 // Uloží referenci k danému segmentu
 const setSegmentRef = (el, index) => {
@@ -381,21 +482,23 @@ const redirectToTranscriptionMode = () =>{
   router.push(`/transcription/${route.params.id}`);
 };
 const regenerateTranscription = () => {
-  const fullText = segments.value.map(s => s.text).join(" ");
-  transcription.value.text = fullText;
-  transcription.value.segments = segments.value.map(segment => {
+  const globalWords = [];
+  const segmentsWithWords = segments.value
+  .filter(segment => segment.text && segment.text.trim().length > 0)  // 💡 ošetření
+  .map(segment => {
     const originalWords = segment.words || [];
-    const newWords = segment.text.trim().split(/\s+/);
+    const wordsArray = segment.text.trim().split(/\s+/);
 
-    // Přiřazení časování pokud počet slov sedí
-    const wordsWithTiming = newWords.map((word, i) => {
+    const wordsWithTiming = wordsArray.map((word, i) => {
       const original = originalWords[i];
-      return {
-        word,
+      const w = {
+        word: (i === 0 ? "" : " ") + word,
         start: original?.start ?? segment.start,
         end: original?.end ?? segment.end,
         confidence: original?.confidence ?? 1.0
       };
+      globalWords.push(w);
+      return w;
     });
 
     return {
@@ -403,6 +506,11 @@ const regenerateTranscription = () => {
       words: wordsWithTiming
     };
   });
+
+
+  transcription.value.segments = segmentsWithWords;
+  transcription.value.words = globalWords;
+  transcription.value.text = globalWords.map(w => w.word).join(""); // složí text s mezerami
 };
 
 const autoSaveTranscription = () => {
@@ -432,6 +540,81 @@ const saveTranscription = async () => {
     $q.notify({ type: 'negative', message: 'Failed to save changes.' });
   }
 };
+const shouldShowSubtitle = computed(() => {
+  const index = selectedSegmentIndex.value
+
+  // zkontroluj platnost indexu a existenci segmentu
+  if (index === null || index < 0 || index >= segments.value.length) return false
+
+  const segment = segments.value[index]
+  const time = videoPlayer.value?.currentTime ?? 0
+
+  return time >= segment.start && time <= segment.end
+});
+
+const openSplitDialog = () => {
+  const segment = segments.value[selectedSegmentIndex.value]
+  splitWords.value = segment.words || segment.text.split(/\s+/).map(w => ({ word: w }))
+  splitIndex.value = null
+  splitDialogVisible.value = true
+}
+
+const selectSplitIndex = (index) => {
+  splitIndex.value = index
+}
+
+const performSplit = () => {
+  const segment = segments.value[selectedSegmentIndex.value]
+  if (!segment || splitIndex.value === null) return
+
+  const firstWords = splitWords.value.slice(0, splitIndex.value + 1)
+  const secondWords = splitWords.value.slice(splitIndex.value + 1)
+
+  if (firstWords.length === 0 || secondWords.length === 0) return
+
+  const firstText = firstWords.map(w => w.word).join("").trim()
+  const secondText = secondWords.map(w => w.word).join("").trim()
+
+  const newSegments = [
+    {
+      ...segment,
+      text: firstText,
+      end: firstWords.at(-1).end, // konec prvního = konec posledního slova
+      words: firstWords,
+    },
+    {
+      ...segment,
+      text: secondText,
+      start: secondWords[0].start, // začátek druhého = začátek prvního slova
+      words: secondWords,
+    },
+  ]
+
+  segments.value.splice(selectedSegmentIndex.value, 1, ...newSegments)
+  segments.value = segments.value.map((s, i) => ({ ...s, id: i }))
+  splitDialogVisible.value = false
+  updateTimelineFromSegments()
+
+}
+
+const deleteSelectedSegment = () => {
+  if (selectedSegmentIndex.value < 0) return
+
+  segments.value.splice(selectedSegmentIndex.value, 1)
+
+  segments.value = segments.value.map((s, i) => ({
+    id: i,
+    start: s.start ?? 0,
+    end: s.end ?? 0,
+    text: s.text ?? "",
+    words: s.words ?? [],
+    startDisplay: formatTime(s.start ?? 0),
+    endDisplay: formatTime(s.end ?? 0),
+  }))
+
+  selectedSegmentIndex.value = -1
+  updateTimelineFromSegments()
+}
 </script>
 
 
@@ -464,7 +647,7 @@ const saveTranscription = async () => {
   width: 100%;
   border: 1px solid #ccc;
   border-radius: 8px;
-  margin-top: 16px;
+  margin-top: 35px;
 }
 
 .segment-item {
@@ -493,8 +676,48 @@ const saveTranscription = async () => {
 /* 🔹 Kontejner pro tlačítko */
 .transcription-button-container {
   display: flex;
+  align-items: center;
+  justify-content: flex-start; /* vše držet vlevo */
+  gap: 12px; /* mezera mezi prvky */
+  flex-wrap: wrap;
+}
+.subtitle-overlay {
+  position: absolute;
+  bottom: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90%;
+  text-align: center;
+  font-size: 1.2rem;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 0.4em 1em;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+.transcription-button-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  flex-wrap: wrap;
+}
+.transcription-header {
   justify-content: flex-start;
-  padding: 10px 10px;
+  flex-wrap: nowrap;
+}
+.split-word {
+  display: inline-block;
+  margin: 4px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #f0f0f0;
+  cursor: pointer;
+}
+.split-word.selected {
+  background-color: #1976d2;
+  color: rgb(9, 72, 232);
 }
 </style>
 

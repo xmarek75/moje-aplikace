@@ -6,7 +6,7 @@
         class="clickable-title" 
         @click="goToIndexPage"
         >
-          LexApp
+          EleScribe
         </q-toolbar-title>
 
         <!-- Uživatelské jméno a ikonka se zobrazí pouze, pokud je uživatel přihlášen -->

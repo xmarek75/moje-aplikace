@@ -74,6 +74,9 @@
                       <q-item clickable v-close-popup @click="unMarked">
                         <q-item-section>↩️ Unmark</q-item-section>
                       </q-item>
+                      <q-item clickable v-close-popup @click="showMoveToFolderDialog">
+                        <q-item-section>📂 Move to</q-item-section>
+                      </q-item>
                     </q-list>
                   </q-menu>
                 </q-btn>
@@ -121,10 +124,10 @@
                           <q-item-section>✏️ Rename</q-item-section>
                         </q-item>
                         <q-item clickable v-close-popup @click="showShareDialog(props.row)">
-                          <q-item-section>Share</q-item-section>
+                          <q-item-section>🤝 Share</q-item-section>
                         </q-item>
-                        <q-item clickable v-close-popup @click="deleteTranscription(props.row.id)">
-                          <q-item-section class="text-red">🗑️ Delete</q-item-section>
+                        <q-item clickable v-close-popup @click="moveSingleToTrash(props.row.id)">
+                          <q-item-section class="text-red">🗑️ Move to trash</q-item-section>
                         </q-item>
                       </q-list>
                     </q-menu>
@@ -176,8 +179,23 @@
             >
               <template v-slot:body="props">
                 <q-tr :props="props" @dblclick="openFolder(props.row.folder)">
-                  <q-td v-for="col in columnsFolders" :key="col.name">
-                    {{ col.field(props.row) }}
+                  <q-td v-for="col in props.cols" :key="col.name">
+                    <template v-if="col.name === 'actions'">
+                      <q-btn
+                        flat
+                        round
+                        dense
+                        icon="delete"
+                        color="negative"
+                        :disable="props.row.count > 0"
+                        @click="confirmFolderDelete(props.row.folder)"
+                      >
+                        <q-tooltip v-if="props.row.count > 0">Folder is not empty</q-tooltip>
+                      </q-btn>
+                    </template>
+                    <template v-else>
+                      {{ col.field(props.row) }}
+                    </template>
                   </q-td>
                 </q-tr>
               </template>
@@ -223,6 +241,9 @@
                       <q-item clickable v-close-popup @click="unMarked">
                         <q-item-section>↩️ Unmark</q-item-section>
                       </q-item>
+                      <q-item clickable v-close-popup @click="showMoveToFolderDialog">
+                        <q-item-section>📂 Move to</q-item-section>
+                      </q-item>
                     </q-list>
                   </q-menu>
                 </q-btn>
@@ -253,6 +274,30 @@
                   @dblclick="openTranscription(props.row)"
                 >
                   {{ col.field(props.row) }}
+                </q-td>
+                <q-td>
+                  <!-- akce pro jeden řádek -->
+                  <q-btn dense flat round icon="more_vert">
+                    <q-menu>
+                      <q-list>
+                        <q-item clickable v-close-popup @click="router.push(`/transcription-test/${props.row.id}`)">
+                          <q-item-section>📂 Open</q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="downloadTranscription(props.row)">
+                          <q-item-section>⬇️ Download</q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="showRenameDialog(props.row)">
+                          <q-item-section>✏️ Rename</q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="showShareDialog(props.row)">
+                          <q-item-section>🤝 Share</q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="moveSingleToTrash(props.row.id)">
+                          <q-item-section class="text-red">🗑️ Move to trash</q-item-section>
+                        </q-item>
+                      </q-list>
+                    </q-menu>
+                  </q-btn>
                 </q-td>
               </q-tr>
             </template>
@@ -340,7 +385,10 @@
           </q-table>
         </div>
         <div v-if="selectedTab === 'transcribing'">
-          <h5>Transcribing</h5>
+          <div class="text-h6 text-primary">
+              <q-icon name="edit_note" class="q-mr-sm" />
+              Transcribing
+            </div>
           <q-table
             flat
             bordered
@@ -443,6 +491,7 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+    <!-- Dialog pro permanentni smazani -->
     <q-dialog v-model="showEmptyTrashDialog">
       <q-card>
         <q-card-section>
@@ -451,6 +500,43 @@
         <q-card-actions align="right">
           <q-btn flat label="Cancel" color="primary" v-close-popup />
           <q-btn label="Yes, Delete All" color="negative" @click="emptyTrash" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+    <!-- Dialog pro presun slozky -->
+    <q-dialog v-model="moveToFolderDialogVisible">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Move to Folder</div>
+          <q-select
+            v-model="selectedFolderToMove"
+            :options="folders.map(f => f.folder)"
+            label="Select folder"
+            filled
+            dense
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="negative" v-close-popup />
+          <q-btn 
+            label="Move" 
+            color="primary" 
+            :disable="!selectedFolderToMove" 
+            @click="moveToFolderConfirmed" 
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+    <!-- Dialog pro smazani slozky -->
+    <q-dialog v-model="deleteFolderDialog">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Delete folder</div>
+          <div>Are you sure you want to delete the folder <strong>{{ folderToDelete }}</strong>?</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn label="Delete" color="negative" @click="deleteFolder" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -509,6 +595,12 @@ const pollingActive = ref(false)
 let pollingInterval = null;
 //zrovna prepisujici 
 const transcribingTranscriptions = ref([])
+//presun do slozky
+const moveToFolderDialogVisible = ref(false)
+const selectedFolderToMove = ref(null)
+//mazani slozky
+const folderToDelete = ref(null)
+const deleteFolderDialog = ref(false)
 
 const columns = [
   { name: 'name', required: true, label: 'Name', align: 'left', field: row => row.media.title, sortable: true },
@@ -527,7 +619,8 @@ const columnsFolders = [
   { name: 'folder', label: 'Folder', align: 'left', field: row => row.folder, sortable: true },
   { name: 'created', label: 'Created', align: 'left', field: row => formatDateTime(row.created), sortable: true },
   { name: 'last_update', label: 'Last Update', align: 'left', field: row => formatDateTime(row.last_update), sortable: true },
-  { name: 'count', label: 'Transcriptions', align: 'left', field: row => row.count, sortable: true }
+  { name: 'count', label: 'Transcriptions', align: 'left', field: row => row.count, sortable: true },
+  { name: 'actions', label: '', align: 'center', field: () => null }
 ]
 const columnsDeleted = [
   { name: 'name', label: 'Name', field: row => row.media?.title ?? '[No Title]', sortable: true, align: 'left' },
@@ -1037,7 +1130,93 @@ const stopPolling = () => {
   clearInterval(pollingInterval)
   pollingInterval = null
 }
+//funkce pro zobrazeni okna pro presun slozek
+const showMoveToFolderDialog = () => {
+  fetchFolders();
+  selectedFolderToMove.value = null
+  moveToFolderDialogVisible.value = true
+}
+//prresun slozek potvrzen 
+const moveToFolderConfirmed = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    await api.put("/folders/move-to-folder", {
+      transcription_ids: selectedIds.value,
+      new_folder: selectedFolderToMove.value
+    }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
 
+    moveToFolderDialogVisible.value = false;
+    selectedIds.value = [];
+
+    // Refresh podle aktivní záložky
+    if (selectedTab.value === 'myTranscriptions') fetchTranscriptions()
+    else if (selectedTab.value === 'folderContents') openFolder(selectedFolder.value)
+
+    $q.notify({
+      type: 'positive',
+      message: 'Transcriptions moved successfully.'
+    });
+
+  } catch (err) {
+    console.error("Error moving transcriptions:", err);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to move transcriptions.'
+    });
+  }
+}
+//dialog pro smazani slozky
+const confirmFolderDelete = (folderName) => {
+  folderToDelete.value = folderName
+  deleteFolderDialog.value = true
+}
+//potvrzeni smazani slozky
+const deleteFolder = async () => {
+  try {
+    const token = localStorage.getItem("token")
+    await api.delete(`/folders/${encodeURIComponent(folderToDelete.value)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    $q.notify({ type: 'positive', message: 'Folder deleted' })
+    deleteFolderDialog.value = false
+    fetchFolders()
+  } catch (err) {
+    console.error("Error deleting folder:", err)
+    $q.notify({ type: 'negative', message: 'Failed to delete folder' })
+  }
+}
+
+const moveSingleToTrash = async (id) => {
+  try {
+    const token = localStorage.getItem("token")
+
+    await api.put(
+      "/transcriptions/actions/move-to-trash",
+      { transcription_ids: [id] },  // jediný ID v poli
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    )
+
+
+    // refresh data
+    if(selectedTab.value === 'myTranscriptions')(fetchTranscriptions()) 
+    else if(selectedTab.value = 'folderContents' ) (openFolder(selectedFolder.value))
+
+    $q.notify({
+      type: 'positive',
+      message: 'Transcription moved to trash.'
+    })
+  } catch (error) {
+    console.error("Error moving to trash:", error)
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to move transcription to trash.'
+    })
+  }
+}
 
 </script>
 
